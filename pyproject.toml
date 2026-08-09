@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coframe"
+version = "0.1.0"
+description = "Self-validating adaptive frame meshes for sparse Wan video diffusion inference."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "CoFrame contributors" }]
+dependencies = [
+  "torch>=2.4.0",
+  "diffusers==0.34.0",
+  "transformers>=4.49.2",
+  "accelerate>=1.7.0",
+  "numpy>=1.24",
+  "packaging>=23.0",
+  "Pillow>=9.0",
+  "imageio>=2.31",
+  "imageio-ffmpeg>=0.4.9",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.6",
+]
+analysis = [
+  "scipy>=1.10",
+  "pandas>=2.0",
+]
+
+[project.scripts]
+coframe-wan = "coframe.cli:main"
+coframe-compare = "coframe.compare:main"
+
+[tool.setuptools.packages.find]
+include = ["coframe*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+exclude = [".git", ".venv", "build", "dist", "outputs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]

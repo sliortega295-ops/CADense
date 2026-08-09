@@ -1,0 +1,310 @@
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass
+from typing import Any
+
+import torch
+
+from ..config import CoFrameConfig
+from ..controller import AdaptiveMeshController
+from ..selection import (
+    frame_representations_from_clean_latents,
+    rhyme_select,
+    transition_scores,
+    uniform_select,
+)
+from ..trace import CoFrameTrace
+from .sparse_forward import coframe_transformer_forward, require_diffusers_034
+
+
+@dataclass(slots=True)
+class CoFrameGenerationOutput:
+    frames: torch.Tensor
+    metadata: dict[str, Any]
+
+
+def _dense_predict(
+    pipe: Any,
+    latents: torch.Tensor,
+    timestep: torch.Tensor,
+    encoder_hidden_states: torch.Tensor,
+    attention_kwargs: dict[str, Any] | None,
+) -> torch.Tensor:
+    transformer_dtype = pipe.transformer.dtype
+    return pipe.transformer(
+        hidden_states=latents.to(transformer_dtype),
+        timestep=timestep.expand(latents.shape[0]),
+        encoder_hidden_states=encoder_hidden_states,
+        attention_kwargs=attention_kwargs,
+        return_dict=False,
+    )[0].float()
+
+
+def _make_controller(
+    *,
+    config: CoFrameConfig,
+    clean_proxy: torch.Tensor,
+) -> tuple[AdaptiveMeshController, list[int], torch.Tensor]:
+    frame_representations = frame_representations_from_clean_latents(clean_proxy)
+    prior = transition_scores(frame_representations).detach().cpu()
+    num_frames = int(clean_proxy.shape[2])
+
+    if config.method == "fixed":
+        anchors = uniform_select(num_frames, config.num_anchors, config.force_boundaries)
+        prior = torch.zeros_like(prior)
+    elif config.method in {"rhyme", "coframe"}:
+        anchors = rhyme_select(
+            frame_representations,
+            config.num_anchors,
+            similarity_threshold=config.rhyme_similarity_threshold,
+            force_boundaries=config.force_boundaries,
+            min_gap=config.min_anchor_gap,
+        )
+    else:
+        raise ValueError(f"A sparse controller is not defined for method={config.method}")
+
+    controller = AdaptiveMeshController(
+        num_frames=num_frames,
+        num_anchors=config.num_anchors,
+        initial_anchors=anchors,
+        prior_scores=prior,
+        force_boundaries=config.force_boundaries,
+        min_gap=config.min_anchor_gap,
+        risk_ema=config.risk_ema,
+        prior_weight=config.rhyme_prior_weight,
+        risk_floor=config.risk_floor,
+        gap_power=config.interval_gap_power,
+        move_penalty=config.move_penalty,
+        min_refresh_gain=config.min_refresh_gain,
+        max_swaps_per_refresh=config.max_swaps_per_refresh if config.method == "coframe" else 0,
+        defect_clip=config.defect_clip,
+    )
+    return controller, anchors, prior
+
+
+def _cuda_sync() -> None:
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+
+@torch.no_grad()
+def coframe_wan_generate(
+    pipe: Any,
+    *,
+    prompt: str | list[str] | None = None,
+    negative_prompt: str | list[str] | None = None,
+    height: int = 480,
+    width: int = 832,
+    num_frames: int = 81,
+    num_inference_steps: int = 50,
+    guidance_scale: float = 5.0,
+    num_videos_per_prompt: int = 1,
+    generator: torch.Generator | list[torch.Generator] | None = None,
+    latents: torch.Tensor | None = None,
+    prompt_embeds: torch.Tensor | None = None,
+    negative_prompt_embeds: torch.Tensor | None = None,
+    attention_kwargs: dict[str, Any] | None = None,
+    max_sequence_length: int = 512,
+    config: CoFrameConfig | None = None,
+) -> CoFrameGenerationOutput:
+    """Run dense/fixed/Rhyme/CoFrame under one Wan2.1 sampler contract."""
+    config = config or CoFrameConfig()
+    require_diffusers_034(config.strict_diffusers_version)
+    config.validate(num_blocks=len(pipe.transformer.blocks))
+
+    pipe.check_inputs(
+        prompt,
+        negative_prompt,
+        height,
+        width,
+        prompt_embeds,
+        negative_prompt_embeds,
+        ["latents"],
+    )
+
+    if num_frames % pipe.vae_scale_factor_temporal != 1:
+        num_frames = num_frames // pipe.vae_scale_factor_temporal * pipe.vae_scale_factor_temporal + 1
+    num_frames = max(num_frames, 1)
+
+    pipe._guidance_scale = guidance_scale
+    pipe._attention_kwargs = attention_kwargs
+    pipe._current_timestep = None
+    pipe._interrupt = False
+    device = pipe._execution_device
+
+    if isinstance(prompt, str):
+        batch_size = 1
+    elif isinstance(prompt, list):
+        batch_size = len(prompt)
+    else:
+        if prompt_embeds is None:
+            raise ValueError("Either prompt or prompt_embeds must be provided")
+        batch_size = prompt_embeds.shape[0]
+
+    prompt_embeds, negative_prompt_embeds = pipe.encode_prompt(
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        do_classifier_free_guidance=pipe.do_classifier_free_guidance,
+        num_videos_per_prompt=num_videos_per_prompt,
+        prompt_embeds=prompt_embeds,
+        negative_prompt_embeds=negative_prompt_embeds,
+        max_sequence_length=max_sequence_length,
+        device=device,
+    )
+    transformer_dtype = pipe.transformer.dtype
+    prompt_embeds = prompt_embeds.to(transformer_dtype)
+    if negative_prompt_embeds is not None:
+        negative_prompt_embeds = negative_prompt_embeds.to(transformer_dtype)
+
+    pipe.scheduler.set_timesteps(num_inference_steps, device=device)
+    timesteps = pipe.scheduler.timesteps
+    if not hasattr(pipe.scheduler, "sigmas"):
+        raise RuntimeError("CoFrame requires a flow scheduler exposing sigmas")
+    sigmas = pipe.scheduler.sigmas.to(device=device, dtype=torch.float32)
+
+    latents = pipe.prepare_latents(
+        batch_size * num_videos_per_prompt,
+        pipe.transformer.config.in_channels,
+        height,
+        width,
+        num_frames,
+        torch.float32,
+        device,
+        generator,
+        latents,
+    )
+    latent_frame_count = int(latents.shape[2])
+    config.validate(num_blocks=len(pipe.transformer.blocks), num_frames=latent_frame_count)
+
+    trace = CoFrameTrace(
+        run={
+            "method": config.method,
+            "height": height,
+            "width": width,
+            "num_frames": num_frames,
+            "latent_frames": latent_frame_count,
+            "num_inference_steps": num_inference_steps,
+            "guidance_scale": guidance_scale,
+            "config": config.to_dict(),
+        }
+    )
+
+    controller: AdaptiveMeshController | None = None
+    initial_anchors: list[int] | None = None
+    prior_scores: torch.Tensor | None = None
+    transformer_events: list[dict[str, Any]] = []
+    dense_step_count = 0
+    sparse_step_count = 0
+
+    # Fixed selection does not need semantic warmup, but we intentionally use
+    # the same dense warmup budget as Rhyme/CoFrame so the comparison isolates
+    # the selector and online refresh rather than early-step compute.
+    if config.method == "dense" or num_inference_steps <= 1:
+        effective_warmup = 0
+    else:
+        # Always leave at least one sparse denoising step, including few-step
+        # smoke tests. The canonical 50-step setting still uses warmup=5.
+        effective_warmup = max(1, min(config.warmup_steps, num_inference_steps - 1))
+
+    _cuda_sync()
+    denoise_start = time.perf_counter()
+    with pipe.progress_bar(total=num_inference_steps) as progress_bar:
+        for step_index, timestep_scalar in enumerate(timesteps):
+            if pipe.interrupt:
+                progress_bar.update()
+                continue
+            pipe._current_timestep = timestep_scalar
+            timestep = timestep_scalar.expand(latents.shape[0])
+
+            use_sparse = config.method != "dense" and controller is not None and step_index >= effective_warmup
+            if not use_sparse:
+                noise_cond = _dense_predict(pipe, latents, timestep_scalar, prompt_embeds, attention_kwargs)
+                if pipe.do_classifier_free_guidance:
+                    if negative_prompt_embeds is None:
+                        raise RuntimeError("CFG is enabled but negative_prompt_embeds is missing")
+                    noise_uncond = _dense_predict(
+                        pipe,
+                        latents,
+                        timestep_scalar,
+                        negative_prompt_embeds,
+                        attention_kwargs,
+                    )
+                    noise_pred = noise_uncond + guidance_scale * (noise_cond - noise_uncond)
+                else:
+                    noise_pred = noise_cond
+                dense_step_count += 1
+
+                if config.method != "dense" and controller is None and step_index + 1 >= effective_warmup:
+                    sigma = sigmas[step_index].to(device=latents.device, dtype=torch.float32)
+                    clean_proxy = latents.float() - sigma * noise_pred.float()
+                    controller, initial_anchors, prior_scores = _make_controller(config=config, clean_proxy=clean_proxy)
+                    trace.add(
+                        "mesh_initialization",
+                        step=step_index,
+                        timestep=int(timestep_scalar.item()),
+                        anchors=initial_anchors,
+                        prior_scores=prior_scores,
+                    )
+            else:
+                assert controller is not None
+                noise_cond, cond_metadata = coframe_transformer_forward(
+                    pipe.transformer,
+                    latents.to(transformer_dtype),
+                    timestep,
+                    prompt_embeds,
+                    config=config,
+                    controller=controller,
+                    step_index=step_index,
+                    replay_block_anchors=None,
+                    update_controller=config.method == "coframe",
+                    attention_kwargs=attention_kwargs,
+                    trace=trace,
+                )
+                if pipe.do_classifier_free_guidance:
+                    if negative_prompt_embeds is None:
+                        raise RuntimeError("CFG is enabled but negative_prompt_embeds is missing")
+                    noise_uncond, uncond_metadata = coframe_transformer_forward(
+                        pipe.transformer,
+                        latents.to(transformer_dtype),
+                        timestep,
+                        negative_prompt_embeds,
+                        config=config,
+                        controller=controller,
+                        step_index=step_index,
+                        replay_block_anchors=cond_metadata.block_anchors,
+                        update_controller=False,
+                        attention_kwargs=attention_kwargs,
+                        trace=None,
+                    )
+                    if uncond_metadata.block_anchors != cond_metadata.block_anchors:
+                        raise RuntimeError("Conditional/unconditional sparse schedules diverged")
+                    noise_pred = noise_uncond.float() + guidance_scale * (noise_cond.float() - noise_uncond.float())
+                else:
+                    noise_pred = noise_cond.float()
+                sparse_step_count += 1
+                transformer_events.append(cond_metadata.to_dict())
+
+            latents = pipe.scheduler.step(noise_pred, timestep_scalar, latents, return_dict=False)[0]
+            progress_bar.update()
+
+    _cuda_sync()
+    denoise_time = time.perf_counter() - denoise_start
+    pipe._current_timestep = None
+
+    metadata: dict[str, Any] = {
+        "method": config.method,
+        "denoise_time_sec": denoise_time,
+        "dense_steps": dense_step_count,
+        "sparse_steps": sparse_step_count,
+        "initial_anchors": initial_anchors,
+        "final_anchors": None if controller is None else list(controller.anchors),
+        "latent_shape": list(latents.shape),
+        "transformer_events": transformer_events,
+        "controller": None if controller is None else controller.state_dict(),
+        "config": config.to_dict(),
+        "trace": trace.to_dict(),
+    }
+    if config.trace_path:
+        trace.write(config.trace_path)
+    return CoFrameGenerationOutput(frames=latents, metadata=metadata)
