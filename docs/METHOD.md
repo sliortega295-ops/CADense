@@ -83,13 +83,19 @@ The conditional branch chooses and updates the mesh. Its exact per-block anchor 
 
 ## 7. Causal oracle probe
 
-At selected cells, CoFrame evaluates both dense and sparse versions of the same block from the same input. It reports per-frame relative RMS error and compares that error with:
+At selected cells, CoFrame evaluates dense and sparse versions of the same block from the same input. The probe first isolates frame placement by reconstructing the dense block delta from exact dense values at each candidate mesh. It compares current CoFrame, original Rhyme, fixed, and an exact fixed-budget piecewise-linear oracle obtained with dynamic programming.
 
-- the static Rhyme prior;
-- causal risk accumulated before the current block;
-- the current block's newly measured defect field.
+The main normalized statistic is
 
-Correlations are computed on non-anchor frames. Anchor error is reported separately as a direct estimate of context-restriction error.
+\[
+\mathrm{Recovery}=rac{E_{\mathrm{Rhyme}}-E_{\mathrm{CoFrame}}}{E_{\mathrm{Rhyme}}-E_{\mathrm{Oracle}}},
+\]
+
+computed on normalized MSE. The probe also enumerates every legal one-anchor swap and compares the controller's predicted action ranking with the true dense interpolation gains. This yields swap Spearman, gain recovery, regret, and top-1/no-op accuracy.
+
+Actual sparse-block error is reported separately because it additionally contains K/V context restriction. Exact-anchor delta error estimates this confound. Finally, dense and sparse block outputs are propagated through the same next one and three dense blocks to determine whether the local error is corrected or amplified.
+
+The static Rhyme prior, causal accumulated risk, and current defect correlations are retained as secondary diagnostics rather than the primary pass/fail criterion.
 
 ## 8. Claims this code can and cannot support
 

@@ -110,6 +110,9 @@ def test_conditional_schedule_can_be_replayed_for_cfg(monkeypatch):
         sketch_dim=0,
         move_penalty=0.0,
         min_refresh_gain=0.0,
+        oracle_probe_steps=(1,),
+        oracle_probe_blocks=(0,),
+        oracle_probe_horizons=(1,),
     )
     controller = AdaptiveMeshController(
         num_frames=5,
@@ -148,5 +151,13 @@ def test_conditional_schedule_can_be_replayed_for_cfg(monkeypatch):
     assert unconditional.shape == hidden.shape
     assert cond_meta.block_anchors == uncond_meta.block_anchors
     assert set(cond_meta.block_anchors) == {0, 1}
+    assert len(cond_meta.probes) == 1
+    probe = cond_meta.probes[0]
+    assert probe["block_delta_relative_l2"] >= 0.0
+    assert probe["mesh_oracle_nmse"] <= probe["mesh_current_nmse"] + 1.0e-7
+    assert probe["mesh_oracle_nmse"] <= probe["mesh_rhyme_nmse"] + 1.0e-7
+    assert "swap_decision" in probe
+    assert "1" in probe["propagation"]
+    assert probe["propagated_relative_l2_h1"] >= 0.0
     assert torch.isfinite(conditional).all()
     assert torch.isfinite(unconditional).all()

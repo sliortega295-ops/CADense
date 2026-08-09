@@ -77,6 +77,9 @@ class AdaptiveMeshController:
         if initial_anchors is None:
             initial_anchors = uniform_select(num_frames, num_anchors, force_boundaries)
         self.anchors = self._normalize_mesh(initial_anchors)
+        # Keep the original Rhyme/fixed mesh immutable for matched-budget
+        # oracle diagnostics after online refresh has moved current anchors.
+        self.initial_anchors = list(self.anchors)
 
         if prior_scores is None:
             prior_scores = torch.zeros(num_frames, dtype=torch.float32)
@@ -267,6 +270,7 @@ class AdaptiveMeshController:
         return {
             "num_frames": self.num_frames,
             "num_anchors": self.num_anchors,
+            "initial_anchors": list(self.initial_anchors),
             "anchors": list(self.anchors),
             "prior": self.prior.tolist(),
             "dynamic_risk": self.dynamic_risk.tolist(),

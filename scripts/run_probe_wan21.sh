@@ -23,5 +23,6 @@ for KV_MODE in anchor_only full_kv; do
     --interpolation-target delta --defect-target delta \
     --oracle-probe-steps 5,20,40 \
     --oracle-probe-blocks 8,14,20 \
+    --oracle-probe-horizons 1,3 \
     --output-dir "$OUTPUT_ROOT"
 done

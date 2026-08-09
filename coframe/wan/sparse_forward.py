@@ -15,10 +15,19 @@ from ..interpolation import (
     frame_token_indices,
     frames_to_tokens,
     leave_one_out_defects,
-    per_frame_relative_rms,
     reconstruct_sparse_block,
     tokens_to_frames,
 )
+from ..metrics import (
+    frame_gram_matrix,
+    headroom_recovery,
+    interpolation_interval_costs,
+    mesh_reconstruction_metrics,
+    one_swap_diagnostics,
+    optimal_piecewise_linear_mesh,
+    reconstruction_metrics,
+)
+from ..selection import uniform_select
 from ..trace import CoFrameTrace
 
 
@@ -230,40 +239,124 @@ def _sparse_block_forward(
 
 
 def _rankdata(values: torch.Tensor) -> torch.Tensor:
-    # Frame counts are tiny. A stable double argsort is enough for the causal
-    # diagnostic; ties are rare in floating-point error vectors.
-    order = torch.argsort(values, stable=True)
-    ranks = torch.empty_like(order, dtype=torch.float32)
-    ranks[order] = torch.arange(values.numel(), device=values.device, dtype=torch.float32)
+    """Average ranks with stable tie handling for tiny frame vectors."""
+    values_cpu = values.detach().float().cpu()
+    order = torch.argsort(values_cpu, stable=True)
+    sorted_values = values_cpu.index_select(0, order)
+    ranks = torch.empty(values_cpu.numel(), dtype=torch.float32)
+    left = 0
+    while left < values_cpu.numel():
+        right = left + 1
+        while right < values_cpu.numel() and sorted_values[right] == sorted_values[left]:
+            right += 1
+        ranks[order[left:right]] = 0.5 * float(left + right - 1)
+        left = right
     return ranks
 
 
-def _pearson(left: torch.Tensor, right: torch.Tensor, eps: float = 1.0e-8) -> float:
-    left = left.float() - left.float().mean()
-    right = right.float() - right.float().mean()
+def _pearson(left: torch.Tensor, right: torch.Tensor, eps: float = 1.0e-8) -> float | None:
+    left = left.float().cpu() - left.float().cpu().mean()
+    right = right.float().cpu() - right.float().cpu().mean()
     denominator = left.square().sum().sqrt() * right.square().sum().sqrt()
-    return float((left * right).sum().div(denominator + eps).item())
+    if float(denominator.item()) <= eps:
+        return None
+    return float(((left * right).sum() / denominator).item())
+
+
+def _post_observation_risk(
+    controller: AdaptiveMeshController,
+    defects: dict[int, torch.Tensor],
+    anchors: list[int],
+) -> torch.Tensor:
+    """Preview the risk field after observing the current block's defects."""
+    observation = controller.project_defects(defects, anchors)
+    dynamic = controller.dynamic_risk.clone() * controller.risk_ema
+    mask = observation > 0
+    dynamic[mask] += (1.0 - controller.risk_ema) * observation[mask]
+    return controller.risk_floor + controller.prior_weight * controller.prior + dynamic
+
+
+def _propagation_diagnostics(
+    *,
+    blocks: Any,
+    block_index: int,
+    dense_output: torch.Tensor,
+    sparse_output: torch.Tensor,
+    encoder_hidden_states: torch.Tensor,
+    timestep_projection: torch.Tensor,
+    rotary_emb: torch.Tensor,
+    horizons: tuple[int, ...],
+    geometry: FrameGeometry,
+    chunk_size: int,
+) -> dict[str, Any]:
+    """Propagate local dense/sparse states through identical dense blocks."""
+    requested = sorted({int(value) for value in horizons if int(value) > 0})
+    if not requested:
+        return {}
+
+    dense_state = dense_output
+    sparse_state = sparse_output
+    results: dict[str, Any] = {}
+    max_horizon = min(max(requested), len(blocks) - block_index - 1)
+    for offset in range(1, max_horizon + 1):
+        block = blocks[block_index + offset]
+        dense_state = block(dense_state, encoder_hidden_states, timestep_projection, rotary_emb)
+        sparse_state = block(sparse_state, encoder_hidden_states, timestep_projection, rotary_emb)
+        if offset in requested:
+            dense_frames = tokens_to_frames(dense_state, geometry.num_frames, geometry.tokens_per_frame)
+            sparse_frames = tokens_to_frames(sparse_state, geometry.num_frames, geometry.tokens_per_frame)
+            results[str(offset)] = reconstruction_metrics(
+                dense_frames,
+                sparse_frames,
+                chunk_size=chunk_size,
+            )
+    return results
 
 
 def _probe_entry(
     *,
     step_index: int,
     block_index: int,
+    block_input: torch.Tensor,
     dense_output: torch.Tensor,
     sparse_output: torch.Tensor,
     geometry: FrameGeometry,
+    config: CoFrameConfig,
     controller: AdaptiveMeshController,
     anchors: list[int],
     defects: dict[int, torch.Tensor],
+    propagation: dict[str, Any],
 ) -> dict[str, Any]:
+    input_frames = tokens_to_frames(block_input, geometry.num_frames, geometry.tokens_per_frame)
     dense_frames = tokens_to_frames(dense_output, geometry.num_frames, geometry.tokens_per_frame)
     sparse_frames = tokens_to_frames(sparse_output, geometry.num_frames, geometry.tokens_per_frame)
-    actual_error = per_frame_relative_rms(dense_frames, sparse_frames).detach().cpu()
+    dense_delta = dense_frames - input_frames
+    sparse_delta = sparse_frames - input_frames
+
+    # Realized sparse-operator error includes both interpolation and any loss of
+    # non-anchor K/V context. Delta error is primary because CoFrame's default
+    # operator interpolates block updates rather than complete hidden states.
+    realized_delta = reconstruction_metrics(
+        dense_delta,
+        sparse_delta,
+        anchors=anchors,
+        chunk_size=config.oracle_metric_chunk_size,
+    )
+    realized_output = reconstruction_metrics(
+        dense_frames,
+        sparse_frames,
+        anchors=anchors,
+        chunk_size=config.oracle_metric_chunk_size,
+    )
+    delta_frame_error = torch.tensor(
+        realized_delta["per_frame_global_normalized_rms"],
+        dtype=torch.float32,
+    )
 
     anchor_mask = torch.zeros(geometry.num_frames, dtype=torch.bool)
     anchor_mask[torch.tensor(anchors, dtype=torch.long)] = True
     non_anchor_mask = ~anchor_mask
-    actual_non_anchor = actual_error[non_anchor_mask]
+    actual_non_anchor = delta_frame_error[non_anchor_mask]
 
     prior_base = controller.risk_floor + controller.prior_weight * controller.prior
     prior_predicted = controller.approximation_risk(anchors, prior_base)
@@ -280,11 +373,107 @@ def _probe_entry(
     prior_pearson, prior_spearman = correlations(prior_predicted)
     causal_pearson, causal_spearman = correlations(causal_predicted)
     defect_pearson, defect_spearman = correlations(current_defect_predicted)
-    return {
+
+    # Mesh-only metrics replace each selected anchor with its exact dense block
+    # value. This isolates frame-position quality from sparse attention context.
+    mesh_target = dense_delta if config.interpolation_target == "delta" else dense_frames
+    gram = frame_gram_matrix(mesh_target, chunk_size=config.oracle_metric_chunk_size)
+    interval_costs = interpolation_interval_costs(gram)
+    total_energy = float(torch.diagonal(gram).sum().item())
+    fixed_anchors = uniform_select(
+        geometry.num_frames,
+        config.num_anchors,
+        config.force_boundaries,
+    )
+    rhyme_anchors = list(controller.initial_anchors)
+    oracle = optimal_piecewise_linear_mesh(
+        interval_costs,
+        num_anchors=config.num_anchors,
+        total_energy=total_energy,
+        min_gap=config.min_anchor_gap,
+        force_boundaries=config.force_boundaries,
+    )
+
+    meshes = {
+        "current": list(anchors),
+        "rhyme": rhyme_anchors,
+        "fixed": fixed_anchors,
+        "oracle": oracle.anchors,
+    }
+    metric_cache: dict[tuple[int, ...], dict[str, Any]] = {}
+    mesh_metrics: dict[str, dict[str, Any]] = {}
+    for name, mesh in meshes.items():
+        key = tuple(mesh)
+        if key not in metric_cache:
+            metric_cache[key] = mesh_reconstruction_metrics(
+                mesh_target,
+                mesh,
+                chunk_size=config.oracle_metric_chunk_size,
+            )
+        mesh_metrics[name] = metric_cache[key]
+
+    current_mesh_error = float(mesh_metrics["current"]["relative_l2"])
+    rhyme_mesh_error = float(mesh_metrics["rhyme"]["relative_l2"])
+    oracle_mesh_error = float(oracle.relative_rmse)
+    current_mesh_nmse = float(mesh_metrics["current"]["normalized_mse"])
+    rhyme_mesh_nmse = float(mesh_metrics["rhyme"]["normalized_mse"])
+    oracle_mesh_nmse = float(oracle.normalized_mse)
+    recovery = headroom_recovery(
+        baseline_error=rhyme_mesh_nmse,
+        method_error=current_mesh_nmse,
+        oracle_error=oracle_mesh_nmse,
+    )
+
+    # Correlation with frame error is not enough: the controller acts by a
+    # fixed-budget remove/add swap. Evaluate the action ranking directly.
+    post_risk = _post_observation_risk(controller, defects, anchors)
+    swap_diagnostics = {
+        "prior": one_swap_diagnostics(
+            anchors=anchors,
+            interval_costs=interval_costs,
+            predicted_risk=prior_base,
+            gap_power=controller.gap_power,
+            move_penalty=controller.move_penalty,
+            min_gain=controller.min_refresh_gain,
+            min_gap=controller.min_gap,
+            force_boundaries=controller.force_boundaries,
+        ),
+        "causal": one_swap_diagnostics(
+            anchors=anchors,
+            interval_costs=interval_costs,
+            predicted_risk=controller.risk,
+            gap_power=controller.gap_power,
+            move_penalty=controller.move_penalty,
+            min_gain=controller.min_refresh_gain,
+            min_gap=controller.min_gap,
+            force_boundaries=controller.force_boundaries,
+        ),
+        "post_observation": one_swap_diagnostics(
+            anchors=anchors,
+            interval_costs=interval_costs,
+            predicted_risk=post_risk,
+            gap_power=controller.gap_power,
+            move_penalty=controller.move_penalty,
+            min_gain=controller.min_refresh_gain,
+            min_gap=controller.min_gap,
+            force_boundaries=controller.force_boundaries,
+        ),
+    }
+
+    anchor_index = torch.tensor(anchors, device=dense_delta.device, dtype=torch.long)
+    anchor_context_delta_relative_l2 = reconstruction_metrics(
+        dense_delta.index_select(1, anchor_index),
+        sparse_delta.index_select(1, anchor_index),
+        chunk_size=config.oracle_metric_chunk_size,
+    )["relative_l2"]
+
+    result: dict[str, Any] = {
         "step": step_index,
         "block": block_index,
         "anchors": list(anchors),
-        "actual_frame_error": actual_error.tolist(),
+        "actual_frame_error": delta_frame_error.tolist(),
+        "actual_delta_frame_error": delta_frame_error.tolist(),
+        "actual_output_frame_error": realized_output["per_frame_global_normalized_rms"],
         "prior_expected_error": prior_predicted.tolist(),
         "causal_expected_error": causal_predicted.tolist(),
         "current_defect_expected_error": current_defect_predicted.tolist(),
@@ -297,11 +486,56 @@ def _probe_entry(
         "spearman_gain_over_rhyme_prior": (
             None if causal_spearman is None or prior_spearman is None else causal_spearman - prior_spearman
         ),
-        "mean_relative_rms": float(actual_error.mean().item()),
-        "non_anchor_mean_relative_rms": float(actual_non_anchor.mean().item()),
-        "anchor_context_error_mean": float(actual_error[anchor_mask].mean().item()),
-        "max_relative_rms": float(actual_error.max().item()),
+        "realized_block_delta": realized_delta,
+        "realized_block_output": realized_output,
+        "mesh_only": {
+            **mesh_metrics,
+            "oracle": {**mesh_metrics["oracle"], **oracle.to_dict()},
+            "headroom_recovery": recovery,
+            "current_oracle_excess": current_mesh_error - oracle_mesh_error,
+            "current_oracle_nmse_regret": current_mesh_nmse - oracle_mesh_nmse,
+            "relative_improvement_over_rhyme": (
+                (rhyme_mesh_error - current_mesh_error) / (rhyme_mesh_error + 1.0e-12)
+            ),
+        },
+        "swap_decision": swap_diagnostics,
+        "propagation": propagation,
+        # Flat aliases make batch aggregation simple.
+        "block_delta_normalized_mse": realized_delta["normalized_mse"],
+        "block_delta_relative_l2": realized_delta["relative_l2"],
+        "non_anchor_block_delta_relative_l2": realized_delta["non_anchor_relative_l2"],
+        "block_delta_frame_p95": realized_delta["non_anchor_frame_error_p95"],
+        "block_delta_frame_cvar10": realized_delta["non_anchor_frame_error_cvar10"],
+        "block_delta_frame_max": realized_delta["frame_error_max"],
+        "anchor_context_delta_relative_l2": anchor_context_delta_relative_l2,
+        "mean_relative_rms": realized_output["frame_error_mean"],
+        "non_anchor_mean_relative_rms": realized_output["non_anchor_frame_error_mean"],
+        "anchor_context_error_mean": float(delta_frame_error[anchor_mask].mean().item()),
+        "max_relative_rms": realized_output["frame_error_max"],
+        "mesh_current_relative_l2": current_mesh_error,
+        "mesh_rhyme_relative_l2": rhyme_mesh_error,
+        "mesh_fixed_relative_l2": float(mesh_metrics["fixed"]["relative_l2"]),
+        "mesh_oracle_relative_l2": oracle_mesh_error,
+        "mesh_current_nmse": current_mesh_nmse,
+        "mesh_rhyme_nmse": rhyme_mesh_nmse,
+        "mesh_fixed_nmse": float(mesh_metrics["fixed"]["normalized_mse"]),
+        "mesh_oracle_nmse": oracle_mesh_nmse,
+        "mesh_headroom_recovery": recovery,
+        "mesh_nmse_improvement_over_rhyme": rhyme_mesh_nmse - current_mesh_nmse,
+        "mesh_current_oracle_excess": current_mesh_error - oracle_mesh_error,
+        "mesh_current_oracle_nmse_regret": current_mesh_nmse - oracle_mesh_nmse,
+        "swap_prior_spearman": swap_diagnostics["prior"]["spearman"],
+        "swap_causal_spearman": swap_diagnostics["causal"]["spearman"],
+        "swap_post_observation_spearman": swap_diagnostics["post_observation"]["spearman"],
+        "swap_post_observation_gain_recovery": swap_diagnostics["post_observation"]["gain_recovery"],
+        "swap_post_observation_regret": swap_diagnostics["post_observation"]["regret"],
+        "swap_post_observation_normalized_regret": swap_diagnostics["post_observation"]["normalized_regret"],
+        "swap_post_observation_top1_exact": swap_diagnostics["post_observation"]["top1_exact"],
     }
+    for horizon, metrics in propagation.items():
+        result[f"propagated_relative_l2_h{horizon}"] = metrics["relative_l2"]
+        result[f"propagated_frame_cvar10_h{horizon}"] = metrics["non_anchor_frame_error_cvar10"]
+    return result
 
 
 def coframe_transformer_forward(
@@ -413,16 +647,31 @@ def coframe_transformer_forward(
                 group_defects.setdefault(frame, []).append(value)
 
         if dense_output is not None:
+            propagation = _propagation_diagnostics(
+                blocks=transformer.blocks,
+                block_index=block_index,
+                dense_output=dense_output,
+                sparse_output=hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+                timestep_projection=timestep_proj,
+                rotary_emb=rotary_emb,
+                horizons=tuple(int(value) for value in config.oracle_probe_horizons),
+                geometry=geometry,
+                chunk_size=config.oracle_metric_chunk_size,
+            )
             metadata.probes.append(
                 _probe_entry(
                     step_index=step_index,
                     block_index=block_index,
+                    block_input=block_input,
                     dense_output=dense_output,
                     sparse_output=hidden_states,
                     geometry=geometry,
+                    config=config,
                     controller=controller,
                     anchors=anchors,
                     defects=defects,
+                    propagation=propagation,
                 )
             )
 

@@ -8,6 +8,8 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from .metrics import reconstruction_metrics, temporal_gradient_relative_l2
+
 
 def _load(path: Path) -> dict[str, Any]:
     payload = torch.load(path, map_location="cpu", weights_only=False)
@@ -16,31 +18,48 @@ def _load(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _per_frame_error(reference: torch.Tensor, approximation: torch.Tensor) -> torch.Tensor:
-    if reference.shape != approximation.shape or reference.ndim != 5:
-        raise ValueError("Latents must share [B,C,F,H,W] shape")
-    reference = reference.float().permute(0, 2, 1, 3, 4)
-    approximation = approximation.float().permute(0, 2, 1, 3, 4)
-    dims = (0, 2, 3, 4)
-    numerator = (reference - approximation).square().mean(dim=dims).sqrt()
-    denominator = reference.square().mean(dim=dims).sqrt()
-    return numerator / (denominator + 1.0e-8)
-
-
 def _probe_summary(metadata: dict[str, Any]) -> dict[str, Any]:
     probes: list[dict[str, Any]] = []
     for event in metadata.get("transformer_events", []):
         probes.extend(event.get("probes", []))
+
+    keys = (
+        "spearman",
+        "pearson",
+        "prior_spearman",
+        "defect_spearman",
+        "spearman_gain_over_rhyme_prior",
+        "anchor_context_error_mean",
+        "anchor_context_delta_relative_l2",
+        "block_delta_normalized_mse",
+        "block_delta_relative_l2",
+        "non_anchor_block_delta_relative_l2",
+        "block_delta_frame_p95",
+        "block_delta_frame_cvar10",
+        "mesh_current_relative_l2",
+        "mesh_rhyme_relative_l2",
+        "mesh_fixed_relative_l2",
+        "mesh_oracle_relative_l2",
+        "mesh_current_nmse",
+        "mesh_rhyme_nmse",
+        "mesh_oracle_nmse",
+        "mesh_headroom_recovery",
+        "mesh_nmse_improvement_over_rhyme",
+        "mesh_current_oracle_nmse_regret",
+        "swap_prior_spearman",
+        "swap_causal_spearman",
+        "swap_post_observation_spearman",
+        "swap_post_observation_gain_recovery",
+        "swap_post_observation_regret",
+        "swap_post_observation_normalized_regret",
+        "swap_post_observation_top1_exact",
+        "propagated_relative_l2_h1",
+        "propagated_relative_l2_h3",
+        "propagated_frame_cvar10_h1",
+        "propagated_frame_cvar10_h3",
+    )
     if not probes:
-        return {
-            "probe_count": 0,
-            "probe_spearman_mean": None,
-            "probe_pearson_mean": None,
-            "probe_prior_spearman_mean": None,
-            "probe_defect_spearman_mean": None,
-            "probe_spearman_gain_mean": None,
-            "probe_anchor_context_error_mean": None,
-        }
+        return {"probe_count": 0, **{f"probe_{key}_mean": None for key in keys}}
 
     def mean_present(key: str) -> float | None:
         values = [float(item[key]) for item in probes if item.get(key) is not None]
@@ -48,6 +67,8 @@ def _probe_summary(metadata: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "probe_count": len(probes),
+        **{f"probe_{key}_mean": mean_present(key) for key in keys},
+        # Compatibility aliases for result files produced by the first prototype.
         "probe_spearman_mean": mean_present("spearman"),
         "probe_pearson_mean": mean_present("pearson"),
         "probe_prior_spearman_mean": mean_present("prior_spearman"),
@@ -60,22 +81,27 @@ def _probe_summary(metadata: dict[str, Any]) -> dict[str, Any]:
 def compare_payload(reference: dict[str, Any], candidate: dict[str, Any], name: str) -> dict[str, Any]:
     dense = reference["latents"].float()
     sparse = candidate["latents"].float()
-    if dense.shape != sparse.shape:
+    if dense.shape != sparse.shape or dense.ndim != 5:
         raise ValueError(f"Shape mismatch for {name}: {tuple(dense.shape)} vs {tuple(sparse.shape)}")
 
-    relative_l2 = torch.linalg.vector_norm(sparse - dense) / (torch.linalg.vector_norm(dense) + 1.0e-8)
+    dense_frames = dense.permute(0, 2, 1, 3, 4)
+    sparse_frames = sparse.permute(0, 2, 1, 3, 4)
+    endpoint = reconstruction_metrics(dense_frames, sparse_frames)
     cosine = F.cosine_similarity(dense.flatten(), sparse.flatten(), dim=0)
-    frame_error = _per_frame_error(dense, sparse)
     dense_time = float(reference.get("metadata", {}).get("denoise_time_sec", 0.0))
     sparse_time = float(candidate.get("metadata", {}).get("denoise_time_sec", 0.0))
 
     result = {
         "method": name,
-        "relative_l2": float(relative_l2.item()),
+        "normalized_mse": endpoint["normalized_mse"],
+        "relative_l2": endpoint["relative_l2"],
         "cosine": float(cosine.item()),
-        "frame_error_mean": float(frame_error.mean().item()),
-        "frame_error_max": float(frame_error.max().item()),
-        "frame_error": frame_error.tolist(),
+        "temporal_gradient_relative_l2": temporal_gradient_relative_l2(dense, sparse, frame_dim=2),
+        "frame_error_mean": endpoint["frame_error_mean"],
+        "frame_error_p95": endpoint["non_anchor_frame_error_p95"],
+        "frame_error_cvar10": endpoint["non_anchor_frame_error_cvar10"],
+        "frame_error_max": endpoint["frame_error_max"],
+        "frame_error": endpoint["per_frame_global_normalized_rms"],
         "denoise_time_sec": sparse_time or None,
         "speedup_vs_dense": dense_time / sparse_time if dense_time > 0 and sparse_time > 0 else None,
         "initial_anchors": candidate.get("metadata", {}).get("initial_anchors"),
@@ -85,26 +111,32 @@ def compare_payload(reference: dict[str, Any], candidate: dict[str, Any], name: 
     controller = candidate.get("metadata", {}).get("controller")
     result["refresh_count"] = len(controller.get("refresh_history", [])) if controller else 0
     result["accepted_refresh_count"] = (
-        sum(1 for event in controller.get("refresh_history", []) if event.get("gain", 0.0) > 0) if controller else 0
+        sum(1 for event in controller.get("refresh_history", []) if event.get("gain", 0.0) > 0)
+        if controller
+        else 0
     )
     return result
 
 
+def _format(value: float | None, pattern: str) -> str:
+    return "-" if value is None else format(value, pattern)
+
+
 def _print_table(rows: list[dict[str, Any]]) -> None:
-    headers = ["method", "speedup", "rel-L2", "cosine", "frame-mean", "frame-max", "probe-rho", "refresh"]
+    headers = ["method", "speedup", "end-L2", "motion-L2", "frame-tail", "mesh-NMSE", "recovery", "swap-rho", "prop-h1"]
     print("  ".join(f"{header:>12}" for header in headers))
     for row in rows:
         speedup = row["speedup_vs_dense"]
-        probe = row["probe_spearman_mean"]
         values = [
             row["method"],
             "-" if speedup is None else f"{speedup:.3f}x",
             f"{row['relative_l2']:.5f}",
-            f"{row['cosine']:.5f}",
-            f"{row['frame_error_mean']:.5f}",
-            f"{row['frame_error_max']:.5f}",
-            "-" if probe is None else f"{probe:.3f}",
-            str(row["accepted_refresh_count"]),
+            f"{row['temporal_gradient_relative_l2']:.5f}",
+            f"{row['frame_error_cvar10']:.5f}",
+            _format(row.get("probe_mesh_current_nmse_mean"), ".6f"),
+            _format(row.get("probe_mesh_headroom_recovery_mean"), ".3f"),
+            _format(row.get("probe_swap_post_observation_spearman_mean"), ".3f"),
+            _format(row.get("probe_propagated_relative_l2_h1_mean"), ".5f"),
         ]
         print("  ".join(f"{value:>12}" for value in values))
 

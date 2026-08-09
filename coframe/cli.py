@@ -84,6 +84,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sketch-dim", type=int, default=64)
     parser.add_argument("--oracle-probe-steps", type=_csv_ints, default=())
     parser.add_argument("--oracle-probe-blocks", type=_csv_ints, default=())
+    parser.add_argument("--oracle-probe-horizons", type=_csv_ints, default=(1, 3))
+    parser.add_argument("--oracle-metric-chunk-size", type=int, default=65_536)
 
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--run-name", default=None)
@@ -134,6 +136,8 @@ def main(argv: list[str] | None = None) -> int:
         sketch_dim=args.sketch_dim,
         oracle_probe_steps=args.oracle_probe_steps,
         oracle_probe_blocks=args.oracle_probe_blocks,
+        oracle_probe_horizons=args.oracle_probe_horizons,
+        oracle_metric_chunk_size=args.oracle_metric_chunk_size,
         trace_path=str(trace_path),
         strict_diffusers_version=not args.allow_unsupported_diffusers,
     )

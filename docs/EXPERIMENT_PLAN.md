@@ -43,21 +43,24 @@ Probe three denoising stages and three block depths. A reasonable first grid is 
 
 Run both `anchor_only` and `full_kv`.
 
-Primary diagnostic quantities:
+Primary diagnostic quantities, in priority order:
 
-1. current-defect Spearman with dense block intervention error;
-2. causal-risk Spearman;
-3. static Rhyme-prior Spearman;
-4. CoFrame gain over Rhyme prior;
-5. anchor context error.
+1. matched-budget mesh-only block-delta NMSE for current CoFrame, original Rhyme, fixed, and exact DP oracle meshes;
+2. Rhyme-to-oracle NMSE headroom recovery plus absolute oracle regret;
+3. one-swap decision Spearman, chosen-action gain recovery, normalized regret, and top-1/no-op correctness;
+4. realized sparse-operator block-delta NMSE and non-anchor CVaR-10;
+5. exact-anchor context error;
+6. error after `+1` and `+3` subsequent dense blocks;
+7. frame-risk correlations as secondary explanatory diagnostics.
 
 Interpretation:
 
-- strong defect correlation in `full_kv` but weak correlation in `anchor_only` identifies K/V context removal as the main confounder;
-- weak correlation in both modes falsifies the current block-interpolation defect;
-- high correlation but no mesh-quality gain points to a controller or temporal-credit problem rather than a signal problem.
+- lower mesh-only error but worse realized error under `anchor_only` identifies K/V context removal as the main confounder;
+- positive frame-risk correlation but poor swap regret means the signal does not induce the right controller action;
+- local improvement that disappears or reverses after `+1/+3` blocks indicates an error-propagation problem;
+- failure to beat Rhyme in mesh-only NMSE under `full_kv` directly falsifies the proposed adaptive frame-placement benefit.
 
-Suggested continuation gate: mean defect or causal-risk Spearman at least 0.5, with a clear positive margin over the Rhyme prior. Treat this as an engineering gate, not a paper threshold.
+Do not use one arbitrary Spearman threshold as the gate. Treat prompt–seed–step–block cells as paired and require positive median CoFrame-minus-Rhyme mesh improvement, a favorable win rate, and a prompt-clustered bootstrap interval. Correlation alone is insufficient.
 
 ## Stage C — matched-budget quality
 
@@ -65,9 +68,10 @@ Run `dense`, `fixed`, `rhyme`, and `coframe` with identical anchor count, warmup
 
 First measure:
 
-- final-latent relative L2 and cosine to dense;
-- per-frame latent error and its maximum;
-- decoded LPIPS / video feature distance if available;
+- final-latent normalized MSE / relative L2 and cosine to dense;
+- temporal-gradient relative L2 to expose motion/transition distortion;
+- frame-error CVaR-10, P95, and maximum;
+- decoded PSNR/SSIM/LPIPS or video feature distance after the mechanism gate;
 - temporal consistency and task-specific VBench/T2V-CompBench scores on the eventual larger set.
 
 The key comparison is **CoFrame versus Rhyme**, not CoFrame versus fixed.
@@ -109,9 +113,12 @@ In a few-step model, adaptation opportunities move from denoising time to block 
 
 ## Result table template
 
-| Method | Anchors | KV | Warmup | Sparse blocks | Rel-L2 ↓ | Frame max ↓ | Quality ↑ | Denoise s ↓ | Speedup ↑ |
-|---|---:|---|---:|---|---:|---:|---:|---:|---:|
-| Dense | 21 | full | — | — | 0 | 0 | — | — | 1.00× |
-| Fixed | 9 | anchor | 5 | 3–26 | — | — | — | — | — |
-| Rhyme | 9 | anchor | 5 | 3–26 | — | — | — | — | — |
-| CoFrame | 9 | anchor | 5 | 3–26 | — | — | — | — | — |
+| Method | Anchors | Mesh NMSE ↓ | Headroom ↑ | Swap regret ↓ | Block CVaR ↓ | Prop. +3 ↓ | End Rel-L2 ↓ | Denoise s ↓ | Speedup ↑ |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Dense | 21 | 0 | — | — | 0 | 0 | 0 | — | 1.00× |
+| Fixed | 9 | — | — | — | — | — | — | — | — |
+| Rhyme | 9 | — | 0.00 | — | — | — | — | — | — |
+| CoFrame | 9 | — | — | — | — | — | — | — | — |
+| Oracle mesh | 9 | — | 1.00 | 0 | — | — | — | — | — |
+
+Exact metric definitions and edge-case handling are specified in [`METRICS.md`](METRICS.md).

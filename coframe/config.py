@@ -55,6 +55,10 @@ class CoFrameConfig:
     # and correlate CoFrame risk with actual sparse-block error.
     oracle_probe_steps: Sequence[int] = field(default_factory=tuple)
     oracle_probe_blocks: Sequence[int] = field(default_factory=tuple)
+    # After a probed block, replay dense dynamics for these many blocks from
+    # both dense and sparse states to measure error amplification/correction.
+    oracle_probe_horizons: Sequence[int] = field(default_factory=lambda: (1, 3))
+    oracle_metric_chunk_size: int = 65_536
 
     trace_path: str | None = None
     strict_diffusers_version: bool = True
@@ -82,6 +86,10 @@ class CoFrameConfig:
             raise ValueError("refresh_every_groups must be >= 1")
         if self.sketch_dim < 0:
             raise ValueError("sketch_dim must be >= 0")
+        if any(int(horizon) <= 0 for horizon in self.oracle_probe_horizons):
+            raise ValueError("oracle_probe_horizons must contain positive integers")
+        if self.oracle_metric_chunk_size < 1:
+            raise ValueError("oracle_metric_chunk_size must be positive")
         if num_blocks is not None:
             if not 0 <= self.sparse_block_start <= num_blocks:
                 raise ValueError("sparse_block_start is out of range")
@@ -98,4 +106,5 @@ class CoFrameConfig:
         result = asdict(self)
         result["oracle_probe_steps"] = list(self.oracle_probe_steps)
         result["oracle_probe_blocks"] = list(self.oracle_probe_blocks)
+        result["oracle_probe_horizons"] = list(self.oracle_probe_horizons)
         return result
