@@ -20,6 +20,10 @@ DEFAULT_NEGATIVE_PROMPT = (
 )
 
 
+def _csv_strings(value: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
 def _csv_ints(value: str) -> tuple[int, ...]:
     if not value.strip():
         return ()
@@ -56,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-id", default="Wan-AI/Wan2.1-T2V-1.3B-Diffusers")
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--negative-prompt", default=DEFAULT_NEGATIVE_PROMPT)
-    parser.add_argument("--method", choices=["dense", "fixed", "rhyme", "coframe"], default="coframe")
+    parser.add_argument("--method", choices=["dense", "fixed", "fis", "rhyme", "coframe"], default="coframe")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--width", type=int, default=832)
@@ -73,6 +77,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--kv-mode", choices=["anchor_only", "full_kv"], default="anchor_only")
     parser.add_argument("--interpolation-target", choices=["delta", "state"], default="delta")
     parser.add_argument("--defect-target", choices=["delta", "state"], default="delta")
+    parser.add_argument("--refresh-signal", choices=["defect", "none", "gap_only", "shuffled"], default="defect")
+    parser.add_argument("--shuffle-defect-seed", type=int, default=20260810)
+    parser.add_argument("--fis-anchor-stride", type=int, default=0)
+    parser.add_argument("--fis-dense-tail-steps", type=int, default=0)
     parser.add_argument("--rhyme-similarity-threshold", type=float, default=0.98)
     parser.add_argument("--rhyme-prior-weight", type=float, default=0.35)
     parser.add_argument("--risk-ema", type=float, default=0.75)
@@ -86,6 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--oracle-probe-blocks", type=_csv_ints, default=())
     parser.add_argument("--oracle-probe-horizons", type=_csv_ints, default=(1, 3))
     parser.add_argument("--oracle-metric-chunk-size", type=int, default=65_536)
+    parser.add_argument("--probe-counterfactual-methods", type=_csv_strings, default=("rhyme", "fis", "fixed"))
 
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--run-name", default=None)
@@ -125,6 +134,10 @@ def main(argv: list[str] | None = None) -> int:
         kv_mode=args.kv_mode,
         interpolation_target=args.interpolation_target,
         defect_target=args.defect_target,
+        refresh_signal=args.refresh_signal,
+        shuffle_defect_seed=args.shuffle_defect_seed,
+        fis_anchor_stride=args.fis_anchor_stride,
+        fis_dense_tail_steps=args.fis_dense_tail_steps,
         rhyme_similarity_threshold=args.rhyme_similarity_threshold,
         rhyme_prior_weight=args.rhyme_prior_weight,
         risk_ema=args.risk_ema,
@@ -138,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         oracle_probe_blocks=args.oracle_probe_blocks,
         oracle_probe_horizons=args.oracle_probe_horizons,
         oracle_metric_chunk_size=args.oracle_metric_chunk_size,
+        probe_counterfactual_methods=args.probe_counterfactual_methods,
         trace_path=str(trace_path),
         strict_diffusers_version=not args.allow_unsupported_diffusers,
     )

@@ -212,3 +212,20 @@ This is a validation implementation, not yet an optimized production kernel.
 ## Attribution
 
 CoFrame builds on the public Wan2.1 and Hugging Face Diffusers interfaces and adopts the clean-latent sequential cosine selector as a RhymeFlow-compatible baseline/prior. See `NOTICE` for links and licenses.
+
+
+## Stage-1b source-attribution experiment
+
+The next experiment preserves RhymeFlow and FIS-DiT as strong baselines and tests whether CoFrame's improvement is specifically caused by correctly aligned block defects rather than generic regularization toward a uniform mesh.
+
+```bash
+bash scripts/run_stage1b_wan21.sh "<prompt>" outputs/stage1b 0
+```
+
+This runs `none`, `gap_only`, `shuffled`, and true `defect` refresh policies under `full_kv`.  At every oracle cell the probe also evaluates matched-input Rhyme-selector, fixed, and FIS-style interleaved meshes, including realized operator error and +1/+3 dense propagation.  For endpoint baselines use:
+
+```bash
+bash scripts/run_baselines_wan21.sh "<prompt>" outputs/baselines 0
+```
+
+`rhyme` here isolates the Rhyme keyframe selector under the shared sparse operator.  Full-system RhymeFlow and official FIS-DiT should still be reproduced separately for the final paper table.

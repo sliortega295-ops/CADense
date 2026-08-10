@@ -122,3 +122,26 @@ In a few-step model, adaptation opportunities move from denoising time to block 
 | Oracle mesh | 9 | — | 1.00 | 0 | — | — | — | — | — |
 
 Exact metric definitions and edge-case handling are specified in [`METRICS.md`](METRICS.md).
+
+
+## Stage B2 — source attribution after the 4xL40 pilot
+
+The first 4xL40 Stage-1 release showed a strong adaptive-mesh signal but an under-calibrated one-swap controller.  Do **not** weaken RhymeFlow or FIS-DiT: both remain strong paper baselines.  The next experiment asks where CoFrame's gain comes from.
+
+Use the same eight prompts and seeds.  Run `scripts/run_stage1b_wan21.sh` in `full_kv` first.  It evaluates four trajectories with the same Rhyme initialization:
+
+- `refresh_signal=none`: no online remeshing;
+- `gap_only`: remesh from interval geometry with no semantic/defect evidence;
+- `shuffled`: preserve defect magnitudes while destroying frame alignment;
+- `defect`: the real CoFrame signal.
+
+Every probe additionally executes **matched-input** Rhyme-selector, fixed, and FIS-style sparse counterfactuals from the exact same block input and propagates all states through the same +1/+3 dense blocks.  This closes the missing comparison in Stage 1.
+
+FIS uses the published interleaved residue rule `r_l=(l-l0) mod n`, boundary anchors, and state interpolation; an exact-K fill/trim is applied only so mechanism comparisons use the same exact-frame budget.  `fis_dense_tail_steps` is explicit rather than hidden.  For final paper tables, also reproduce the official FIS-DiT and full RhymeFlow systems with their authors' recommended settings; the in-repo `rhyme` method is a selector-controlled baseline under CoFrame's sparse operator, not a claim of reproducing the entire asynchronous RhymeFlow scheduler.
+
+Primary Stage-B2 decisions:
+
+1. true defect must beat `gap_only` and `shuffled` on matched-input mesh NMSE and harmful-swap rate;
+2. CoFrame must beat Rhyme and FIS on realized block-delta NMSE from the same input;
+3. the advantage should retain the same sign after +1/+3 dense propagation;
+4. only then run `scripts/run_baselines_wan21.sh` for endpoint fidelity and warmed latency.

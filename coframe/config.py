@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, Sequence
 
-Method = Literal["dense", "fixed", "rhyme", "coframe"]
+Method = Literal["dense", "fixed", "fis", "rhyme", "coframe"]
+RefreshSignal = Literal["defect", "none", "gap_only", "shuffled"]
 KVMode = Literal["anchor_only", "full_kv"]
 InterpolationTarget = Literal["delta", "state"]
 DefectTarget = Literal["delta", "state"]
@@ -33,6 +34,17 @@ class CoFrameConfig:
     interpolation_target: InterpolationTarget = "delta"
     defect_target: DefectTarget = "delta"
 
+    # CoFrame source-attribution ablations. "none" freezes the initial
+    # Rhyme mesh; "gap_only" remeshes with a uniform risk field;
+    # "shuffled" preserves defect magnitudes but breaks frame alignment.
+    refresh_signal: RefreshSignal = "defect"
+    shuffle_defect_seed: int = 20260810
+
+    # FIS-DiT-style interleaved baseline. stride=0 derives ceil(F/K).
+    # A dense tail is optional and explicitly counted in latency.
+    fis_anchor_stride: int = 0
+    fis_dense_tail_steps: int = 0
+
     # RhymeFlow-style clean-latent prior.
     rhyme_similarity_threshold: float = 0.98
     rhyme_prior_weight: float = 0.35
@@ -59,13 +71,23 @@ class CoFrameConfig:
     # both dense and sparse states to measure error amplification/correction.
     oracle_probe_horizons: Sequence[int] = field(default_factory=lambda: (1, 3))
     oracle_metric_chunk_size: int = 65_536
+    probe_counterfactual_methods: Sequence[str] = field(default_factory=lambda: ("rhyme", "fis", "fixed"))
 
     trace_path: str | None = None
     strict_diffusers_version: bool = True
 
     def validate(self, *, num_blocks: int | None = None, num_frames: int | None = None) -> None:
-        if self.method not in {"dense", "fixed", "rhyme", "coframe"}:
+        if self.method not in {"dense", "fixed", "fis", "rhyme", "coframe"}:
             raise ValueError(f"Unsupported method: {self.method}")
+        if self.refresh_signal not in {"defect", "none", "gap_only", "shuffled"}:
+            raise ValueError(f"Unsupported refresh_signal: {self.refresh_signal}")
+        if self.fis_anchor_stride < 0:
+            raise ValueError("fis_anchor_stride must be >= 0")
+        if self.fis_dense_tail_steps < 0:
+            raise ValueError("fis_dense_tail_steps must be >= 0")
+        invalid_counterfactuals = set(self.probe_counterfactual_methods) - {"rhyme", "fis", "fixed"}
+        if invalid_counterfactuals:
+            raise ValueError(f"Unsupported probe counterfactuals: {sorted(invalid_counterfactuals)}")
         if self.num_anchors < 1:
             raise ValueError("num_anchors must be positive")
         if self.force_boundaries and self.num_anchors < 2 and (num_frames is None or num_frames > 1):
@@ -102,9 +124,17 @@ class CoFrameConfig:
     def should_probe(self, step_index: int, block_index: int) -> bool:
         return step_index in set(self.oracle_probe_steps) and block_index in set(self.oracle_probe_blocks)
 
+    def is_sparse_step(self, step_index: int, total_steps: int) -> bool:
+        if self.method == "dense":
+            return False
+        if self.method == "fis" and self.fis_dense_tail_steps > 0:
+            return step_index < max(0, total_steps - self.fis_dense_tail_steps)
+        return True
+
     def to_dict(self) -> dict[str, Any]:
         result = asdict(self)
         result["oracle_probe_steps"] = list(self.oracle_probe_steps)
         result["oracle_probe_blocks"] = list(self.oracle_probe_blocks)
         result["oracle_probe_horizons"] = list(self.oracle_probe_horizons)
+        result["probe_counterfactual_methods"] = list(self.probe_counterfactual_methods)
         return result
