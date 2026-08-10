@@ -1,0 +1,63 @@
+name: Fix Stage-1b gap-only control
+
+on:
+  push:
+    branches: [agent/coframe-stage1b]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/coframe-stage1b
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Patch gap-only control
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('coframe/wan/pipeline.py')
+          text = p.read_text()
+          old = '        risk_floor=config.risk_floor,\n'
+          new = '        risk_floor=(1.0 if config.method == "coframe" and config.refresh_signal == "gap_only" else config.risk_floor),\n'
+          if old not in text:
+              raise SystemExit('risk_floor pattern missing')
+          p.write_text(text.replace(old, new, 1))
+
+          t = Path('tests/test_stage1b_policies.py')
+          body = t.read_text()
+          body = body.replace('from coframe.config import CoFrameConfig\n', 'from coframe.config import CoFrameConfig\nfrom coframe.controller import AdaptiveMeshController\n')
+          body += '''\n\ndef test_gap_only_uniform_risk_can_regularize_clustered_mesh():\n    controller = AdaptiveMeshController(\n        num_frames=21,\n        num_anchors=9,\n        initial_anchors=[0, 1, 2, 3, 4, 5, 6, 7, 20],\n        prior_scores=torch.zeros(21),\n        prior_weight=0.0,\n        risk_floor=1.0,\n        move_penalty=0.02,\n        max_swaps_per_refresh=1,\n    )\n    before = list(controller.anchors)\n    event = controller.refresh()[0]\n    assert event.gain > 0\n    assert controller.anchors != before\n'''
+          t.write_text(body)
+
+          s = Path('scripts/summarize_stage1b.py')
+          body = s.read_text()
+          old = 'result[signal] = {name: {"count": len(values), "median": safe_median(values), "win_rate": sum(float(v) > 0 for v in values) / len(values) if values else None} for name, values in sorted(metrics.items())}'
+          new = 'result[signal] = {name: {"count": len(values), "median": safe_median(values), "win_rate": sum(float(v) > 0 for v in values) / len(values) if values else None, "harmful_rate": sum(float(v) < 0 for v in values) / len(values) if values else None} for name, values in sorted(metrics.items())}'
+          if old not in body:
+              raise SystemExit('summary pattern missing')
+          s.write_text(body.replace(old, new, 1))
+          PY
+      - name: Install and test
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install pytest packaging
+          pip install -e . --no-deps --no-build-isolation
+          python -m compileall -q coframe scripts
+          pytest -q
+      - name: Commit
+        run: |
+          rm -f .github/workflows/stage1b-gap-control-fix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: make gap-only remeshing a meaningful control'
+          git push origin HEAD:agent/coframe-stage1b
