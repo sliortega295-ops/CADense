@@ -54,7 +54,7 @@ def main():
 
     result = {}
     for signal, metrics in sorted(buckets.items()):
-        result[signal] = {name: {"count": len(values), "median": safe_median(values), "win_rate": sum(float(v) > 0 for v in values) / len(values) if values else None} for name, values in sorted(metrics.items())}
+        result[signal] = {name: {"count": len(values), "median": safe_median(values), "win_rate": sum(float(v) > 0 for v in values) / len(values) if values else None, "harmful_rate": sum(float(v) < 0 for v in values) / len(values) if values else None} for name, values in sorted(metrics.items())}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps(result, indent=2))

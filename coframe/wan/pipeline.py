@@ -94,7 +94,7 @@ def _make_controller(
         min_gap=config.min_anchor_gap,
         risk_ema=config.risk_ema,
         prior_weight=controller_prior_weight,
-        risk_floor=config.risk_floor,
+        risk_floor=(1.0 if config.method == "coframe" and config.refresh_signal == "gap_only" else config.risk_floor),
         gap_power=config.interval_gap_power,
         move_penalty=config.move_penalty,
         min_refresh_gain=config.min_refresh_gain,
