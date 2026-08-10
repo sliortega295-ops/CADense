@@ -1,0 +1,180 @@
+{
+  "schema_version": "coframe.probe_posthoc.v1",
+  "scope": "descriptive follow-up; does not change preregistered gate",
+  "by_kv_mode": {
+    "anchor_only": {
+      "cell_count": 72,
+      "coframe_vs_fixed": {
+        "median_relative_improvement": 0.19951011660986567,
+        "mean_relative_improvement": 0.17343970082296276,
+        "win_rate": 0.9305555555555556
+      },
+      "fixed_vs_rhyme": {
+        "median_relative_improvement": 0.28316271308350605,
+        "mean_relative_improvement": 0.2449954654640299,
+        "win_rate": 0.7638888888888888
+      },
+      "mesh_to_realized_error_spearman": {
+        "operator_block_delta_nmse": 0.9925397131648339,
+        "operator_relative_l2": 0.9925397131648339,
+        "propagation_plus_1_relative_l2": 0.16480159495787514,
+        "propagation_plus_3_relative_l2": 0.13688983214354622
+      },
+      "operator_nmse_over_mesh_nmse_median": 1.1992090243242794,
+      "exact_oracle_anchor_cells": 44,
+      "refresh_decisions_per_run": [
+        360,
+        360,
+        360,
+        360,
+        360,
+        360,
+        360,
+        360
+      ],
+      "changed_refreshes_per_run": [
+        13,
+        5,
+        21,
+        46,
+        7,
+        3,
+        188,
+        181
+      ],
+      "initial_anchor_patterns": {
+        "[0, 1, 2, 3, 4, 5, 6, 7, 20]": 2,
+        "[0, 2, 3, 5, 6, 7, 10, 12, 20]": 1,
+        "[0, 5, 7, 11, 12, 13, 15, 16, 20]": 1,
+        "[0, 1, 2, 3, 4, 5, 6, 8, 20]": 1,
+        "[0, 1, 2, 3, 5, 6, 7, 14, 20]": 1,
+        "[0, 1, 2, 6, 8, 10, 14, 16, 20]": 1,
+        "[0, 1, 2, 3, 7, 8, 9, 11, 20]": 1
+      },
+      "final_anchor_patterns": {
+        "[0, 1, 3, 6, 9, 12, 15, 18, 20]": 1,
+        "[0, 2, 5, 7, 9, 12, 14, 17, 20]": 1,
+        "[0, 2, 5, 7, 10, 12, 14, 17, 20]": 1,
+        "[0, 1, 3, 5, 8, 11, 14, 17, 20]": 3,
+        "[0, 2, 4, 6, 8, 11, 14, 17, 20]": 1,
+        "[0, 1, 2, 5, 8, 11, 14, 17, 20]": 1
+      },
+      "by_denoising_step": [
+        {
+          "denoising_step": 5,
+          "median_mesh_relative_improvement_over_rhyme": 0.1048088106507092,
+          "mesh_win_rate": 0.8333333333333334,
+          "median_headroom_recovery": 0.6581447963260845,
+          "median_swap_gain_recovery": 0.0,
+          "median_operator_relative_l2": 0.4386770507197073,
+          "median_propagation_plus_3_relative_l2": 0.0923279318005655
+        },
+        {
+          "denoising_step": 20,
+          "median_mesh_relative_improvement_over_rhyme": 0.5233363188558087,
+          "mesh_win_rate": 1.0,
+          "median_headroom_recovery": 0.9999948161705434,
+          "median_swap_gain_recovery": -0.7083569901280738,
+          "median_operator_relative_l2": 0.3309413803548147,
+          "median_propagation_plus_3_relative_l2": 0.0961043875638736
+        },
+        {
+          "denoising_step": 40,
+          "median_mesh_relative_improvement_over_rhyme": 0.5418891103687911,
+          "mesh_win_rate": 1.0,
+          "median_headroom_recovery": 1.000004067359198,
+          "median_swap_gain_recovery": -0.9654260784975602,
+          "median_operator_relative_l2": 0.2857243076835265,
+          "median_propagation_plus_3_relative_l2": 0.08346474781252815
+        }
+      ]
+    },
+    "full_kv": {
+      "cell_count": 72,
+      "coframe_vs_fixed": {
+        "median_relative_improvement": 0.20995119465085954,
+        "mean_relative_improvement": 0.18056251662150227,
+        "win_rate": 0.9444444444444444
+      },
+      "fixed_vs_rhyme": {
+        "median_relative_improvement": 0.3040593453521683,
+        "mean_relative_improvement": 0.25919599537038834,
+        "win_rate": 0.8333333333333334
+      },
+      "mesh_to_realized_error_spearman": {
+        "operator_block_delta_nmse": 1.0,
+        "operator_relative_l2": 1.0,
+        "propagation_plus_1_relative_l2": 0.23358415332175708,
+        "propagation_plus_3_relative_l2": 0.20113833687053834
+      },
+      "operator_nmse_over_mesh_nmse_median": 1.0001598761658401,
+      "exact_oracle_anchor_cells": 38,
+      "refresh_decisions_per_run": [
+        360,
+        360,
+        360,
+        360,
+        360,
+        360,
+        360,
+        360
+      ],
+      "changed_refreshes_per_run": [
+        13,
+        81,
+        70,
+        116,
+        14,
+        29,
+        261,
+        187
+      ],
+      "initial_anchor_patterns": {
+        "[0, 1, 2, 3, 4, 5, 6, 7, 20]": 2,
+        "[0, 2, 3, 5, 6, 7, 10, 12, 20]": 1,
+        "[0, 5, 7, 11, 12, 13, 15, 16, 20]": 1,
+        "[0, 1, 2, 3, 4, 5, 6, 8, 20]": 1,
+        "[0, 1, 2, 3, 5, 6, 7, 14, 20]": 1,
+        "[0, 1, 2, 6, 8, 10, 14, 16, 20]": 1,
+        "[0, 1, 2, 3, 7, 8, 9, 11, 20]": 1
+      },
+      "final_anchor_patterns": {
+        "[0, 1, 3, 6, 9, 12, 15, 18, 20]": 1,
+        "[0, 2, 5, 7, 9, 12, 14, 17, 20]": 1,
+        "[0, 2, 5, 7, 10, 12, 15, 17, 20]": 1,
+        "[0, 1, 3, 5, 8, 11, 14, 17, 20]": 3,
+        "[0, 1, 2, 5, 8, 11, 14, 17, 20]": 2
+      },
+      "by_denoising_step": [
+        {
+          "denoising_step": 5,
+          "median_mesh_relative_improvement_over_rhyme": 0.12170542525523165,
+          "mesh_win_rate": 0.7916666666666666,
+          "median_headroom_recovery": 0.7312156607347104,
+          "median_swap_gain_recovery": 0.0,
+          "median_operator_relative_l2": 0.4218708382245939,
+          "median_propagation_plus_3_relative_l2": 0.08931436181885599
+        },
+        {
+          "denoising_step": 20,
+          "median_mesh_relative_improvement_over_rhyme": 0.5195249027998279,
+          "mesh_win_rate": 1.0,
+          "median_headroom_recovery": 0.9999802641887761,
+          "median_swap_gain_recovery": 0.0,
+          "median_operator_relative_l2": 0.3380980358316905,
+          "median_propagation_plus_3_relative_l2": 0.08235305898640566
+        },
+        {
+          "denoising_step": 40,
+          "median_mesh_relative_improvement_over_rhyme": 0.5480900373955833,
+          "mesh_win_rate": 1.0,
+          "median_headroom_recovery": 1.0000014428070516,
+          "median_swap_gain_recovery": -0.5198892018464282,
+          "median_operator_relative_l2": 0.28387264435666193,
+          "median_propagation_plus_3_relative_l2": 0.07377475522564965
+        }
+      ]
+    }
+  },
+  "limitation": "The v0.1 trace has no matched-input realized Rhyme sparse-operator counterfactual; operator and propagation values are absolute CoFrame errors, not direct CoFrame-vs-Rhyme deltas."
+}

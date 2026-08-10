@@ -1,0 +1,114 @@
+{
+  "schema_version": "coframe.initial_exploration.v1",
+  "status": "stage1_complete_gate_fail_stage2_not_run",
+  "remote": {
+    "host": "user-NF5280M6",
+    "workspace": "/data/jiayu/yongyan_liu/CoFrame",
+    "source_repo": "https://github.com/sliortega295-ops/CADense.git",
+    "branch": "main",
+    "commit": "915fb855446770e9cad91cb66b6ef46040deb389",
+    "tracked_diff": "empty"
+  },
+  "hardware": {
+    "gpu_count": 4,
+    "gpu": "NVIDIA L40",
+    "memory_mib_each": 46068,
+    "driver": "580.173.02",
+    "parallelism": "four independent prompt-seed processes; no DDP/TP"
+  },
+  "environment": {
+    "python": "3.10.19",
+    "torch": "2.13.0+cu130",
+    "cuda_runtime": "13.0",
+    "diffusers": "0.34.0",
+    "transformers": "4.53.2",
+    "accelerate": "1.14.0",
+    "huggingface_hub": "0.36.2",
+    "freeze": "logs/environment_freeze.txt"
+  },
+  "model": {
+    "id": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+    "local_path": "/data/jiayu/yongyan_liu/models/Wan2.1-T2V-1.3B-Diffusers",
+    "revision": "0fad780a534b6463e45facd96134c9f345acfa5b",
+    "provenance": "/data/jiayu/yongyan_liu/models/Wan2.1-T2V-1.3B-Diffusers/MODEL_PROVENANCE.json"
+  },
+  "tests": {
+    "pytest": "22 passed",
+    "smoke": "success",
+    "probe_runs_expected": 16,
+    "probe_runs_success": 16,
+    "probe_cells_expected": 144,
+    "probe_cells_observed": 144,
+    "nan_inf": false,
+    "oom": false
+  },
+  "contract": {
+    "height": 480,
+    "width": 832,
+    "num_frames": 81,
+    "latent_frames": 21,
+    "steps": 50,
+    "guidance_scale": 5.0,
+    "flow_shift": 3.0,
+    "warmup_steps": 5,
+    "num_anchors": 9,
+    "sparse_block_start": 3,
+    "sparse_block_end_exclusive": 27,
+    "block_group_size": 3,
+    "probe_steps": [
+      5,
+      20,
+      40
+    ],
+    "probe_blocks": [
+      8,
+      14,
+      20
+    ],
+    "probe_horizons": [
+      1,
+      3
+    ],
+    "seed": 0,
+    "decode": false
+  },
+  "prompts": [
+    "A red toy car moves smoothly from left to right across a wooden table.",
+    "A red toy car makes a sharp U-turn around a blue cube.",
+    "A gymnast performs a fast cartwheel and lands upright.",
+    "Two dancers cross paths, exchange positions, and continue in opposite directions.",
+    "A brown dog jumps to catch a small yellow ball thrown through the air.",
+    "A hummingbird rapidly moves between two red flowers while the camera remains fixed.",
+    "The camera circles around a stationary bronze statue in a plaza.",
+    "A cup sits on a table while steam rises slowly; the rest of the scene remains still."
+  ],
+  "gate": {
+    "status": "FAIL",
+    "full_kv": {
+      "median_mesh_improvement": 0.39590399600955756,
+      "mesh_win_rate": 0.9305555555555556,
+      "mesh_bootstrap_95ci": [
+        0.3036448973980557,
+        0.5195249027998279
+      ],
+      "median_headroom_recovery": 0.9999182036404113,
+      "median_swap_gain_recovery": 0.0,
+      "operator_rhyme_counterfactual": "Not Run"
+    },
+    "stage2": "Not Run"
+  },
+  "failures_preserved": [
+    "system Python 3.12 ensurepip unavailable",
+    "shared /data/models Diffusers snapshot links broken",
+    "Transformers 5.14.1 incompatible with Diffusers 0.34.0",
+    "attempted exact transformers 4.49.2 unavailable on index"
+  ],
+  "artifacts": {
+    "report": "reports/CoFrame_4xL40_INITIAL_EXPLORATION_20260810.md",
+    "probe_cells": "outputs/probe/probe_cells.csv",
+    "probe_summary": "outputs/probe/probe_summary.json",
+    "probe_validation": "outputs/probe/probe_validation.json",
+    "probe_posthoc": "outputs/probe/probe_additional_diagnostics.json",
+    "smoke_validation": "logs/smoke_validation.json"
+  }
+}

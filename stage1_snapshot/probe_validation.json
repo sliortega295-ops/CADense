@@ -1,0 +1,103 @@
+{
+  "expected_runs": 16,
+  "observed_runs": 16,
+  "runs": [
+    {
+      "run": "outputs/probe/p0_s0/coframe_anchor_only_seed0",
+      "status": "success",
+      "probe_count": 9,
+      "finite": true
+    },
+    {
+      "run": "outputs/probe/p0_s0/coframe_full_kv_seed0",
+      "status": "success",
+      "probe_count": 9,
+      "finite": true
+    },
+    {
+      "run": "outputs/probe/p1_s0/coframe_anchor_only_seed0",
+      "status": "success",
+      "probe_count": 9,
+      "finite": true
+    },
+    {
+      "run": "outputs/probe/p1_s0/coframe_full_kv_seed0",
+      "status": "success",
+      "probe_count": 9,
+      "finite": true
+    },
+    {
+      "run": "outputs/probe/p2_s0/coframe_anchor_only_seed0",
+      "status": "success",
+      "probe_count": 9,
+      "finite": true
+    },
+    {
+      "run": "outputs/probe/p2_s0/coframe_full_kv_seed0",
+      "status": "success",
+      "probe_count": 9,
+      "finite": true
+    },
+    {
+      "run": "outputs/probe/p3_s0/coframe_anchor_only_seed0",
+      "status": "success",
+      "probe_count": 9,
+      "finite": true
+    },
+    {
+      "run": "outputs/probe/p3_s0/coframe_full_kv_seed0",
+      "status": "success",
+      "probe_count": 9,
+      "finite": true
+    },
+    {
+      "run": "outputs/probe/p4_s0/coframe_anchor_only_seed0",
+      "status": "success",
+      "probe_count": 9,
+      "finite": true
+    },
+    {
+      "run": "outputs/probe/p4_s0/coframe_full_kv_seed0",
+      "status": "success",
+      "probe_count": 9,
+      "finite": true
+    },
+    {
+      "run": "outputs/probe/p5_s0/coframe_anchor_only_seed0",
+      "status": "success",
+      "probe_count": 9,
+      "finite": true
+    },
+    {
+      "run": "outputs/probe/p5_s0/coframe_full_kv_seed0",
+      "status": "success",
+      "probe_count": 9,
+      "finite": true
+    },
+    {
+      "run": "outputs/probe/p6_s0/coframe_anchor_only_seed0",
+      "status": "success",
+      "probe_count": 9,
+      "finite": true
+    },
+    {
+      "run": "outputs/probe/p6_s0/coframe_full_kv_seed0",
+      "status": "success",
+      "probe_count": 9,
+      "finite": true
+    },
+    {
+      "run": "outputs/probe/p7_s0/coframe_anchor_only_seed0",
+      "status": "success",
+      "probe_count": 9,
+      "finite": true
+    },
+    {
+      "run": "outputs/probe/p7_s0/coframe_full_kv_seed0",
+      "status": "success",
+      "probe_count": 9,
+      "finite": true
+    }
+  ],
+  "errors": []
+}
