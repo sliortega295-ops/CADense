@@ -1,0 +1,40 @@
+name: Stage1 release inspection
+
+on:
+  push:
+    branches: [agent/stage1-release-inspection]
+    paths: [.github/workflows/stage1-release-inspection.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  import-release-metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/stage1-release-inspection
+      - name: Download small Stage-1 release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          mkdir -p stage1_snapshot
+          gh release download coframe-stage1-20260810 \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir stage1_snapshot \
+            --pattern 'CoFrame_4xL40_INITIAL_EXPLORATION_20260810.md' \
+            --pattern 'CoFrame_RUN_MANIFEST_20260810.json' \
+            --pattern 'probe_cells.csv' \
+            --pattern 'probe_summary.json' \
+            --pattern 'probe_validation.json' \
+            --pattern 'probe_additional_diagnostics.json'
+      - name: Commit snapshot to analysis branch
+        run: |
+          set -euxo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add stage1_snapshot
+          git commit -m 'chore: import Stage-1 release summaries for inspection'
+          git push origin HEAD:agent/stage1-release-inspection
