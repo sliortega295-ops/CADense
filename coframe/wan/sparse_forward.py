@@ -27,7 +27,7 @@ from ..metrics import (
     optimal_piecewise_linear_mesh,
     reconstruction_metrics,
 )
-from ..selection import uniform_select
+from ..selection import fis_interleaved_select, uniform_select
 from ..trace import CoFrameTrace
 
 
@@ -163,6 +163,7 @@ def _sparse_block_forward(
     config: CoFrameConfig,
     compute_defects: bool,
     projection: torch.Tensor | None,
+    interpolation_target: str | None = None,
 ) -> tuple[torch.Tensor, dict[int, torch.Tensor]]:
     """Execute one Wan block exactly on anchors and reconstruct all frames."""
     if temb.ndim != 3:
@@ -227,7 +228,7 @@ def _sparse_block_forward(
         input_frames,
         exact_anchor_frames,
         anchors,
-        target=config.interpolation_target,
+        target=interpolation_target or config.interpolation_target,
     )
 
     defects: dict[int, torch.Tensor] = {}
@@ -274,6 +275,20 @@ def _post_observation_risk(
     mask = observation > 0
     dynamic[mask] += (1.0 - controller.risk_ema) * observation[mask]
     return controller.risk_floor + controller.prior_weight * controller.prior + dynamic
+
+
+def _shuffle_defects(
+    defects: dict[int, torch.Tensor],
+    *,
+    seed: int,
+) -> dict[int, torch.Tensor]:
+    if len(defects) <= 1:
+        return dict(defects)
+    keys = sorted(defects)
+    generator = torch.Generator(device="cpu").manual_seed(int(seed))
+    order = torch.randperm(len(keys), generator=generator).tolist()
+    values = [defects[keys[index]] for index in order]
+    return {key: value for key, value in zip(keys, values)}
 
 
 def _propagation_diagnostics(
@@ -326,6 +341,12 @@ def _probe_entry(
     anchors: list[int],
     defects: dict[int, torch.Tensor],
     propagation: dict[str, Any],
+    block: Any,
+    blocks: Any,
+    encoder_hidden_states: torch.Tensor,
+    timestep_projection: torch.Tensor,
+    rotary_emb: torch.Tensor,
+    projection: torch.Tensor | None,
 ) -> dict[str, Any]:
     input_frames = tokens_to_frames(block_input, geometry.num_frames, geometry.tokens_per_frame)
     dense_frames = tokens_to_frames(dense_output, geometry.num_frames, geometry.tokens_per_frame)
@@ -385,7 +406,15 @@ def _probe_entry(
         config.num_anchors,
         config.force_boundaries,
     )
-    rhyme_anchors = list(controller.initial_anchors)
+    rhyme_anchors = list(getattr(controller, "rhyme_reference_anchors", controller.initial_anchors))
+    fis_anchors = fis_interleaved_select(
+        geometry.num_frames,
+        config.num_anchors,
+        block_index,
+        config.sparse_block_start,
+        force_boundaries=config.force_boundaries,
+        anchor_stride=config.fis_anchor_stride,
+    )
     oracle = optimal_piecewise_linear_mesh(
         interval_costs,
         num_anchors=config.num_anchors,
@@ -398,6 +427,7 @@ def _probe_entry(
         "current": list(anchors),
         "rhyme": rhyme_anchors,
         "fixed": fixed_anchors,
+        "fis": fis_anchors,
         "oracle": oracle.anchors,
     }
     metric_cache: dict[tuple[int, ...], dict[str, Any]] = {}
@@ -427,6 +457,13 @@ def _probe_entry(
     # Correlation with frame error is not enough: the controller acts by a
     # fixed-budget remove/add swap. Evaluate the action ranking directly.
     post_risk = _post_observation_risk(controller, defects, anchors)
+    shuffled_defects = _shuffle_defects(
+        defects,
+        seed=config.shuffle_defect_seed + step_index * 1009 + block_index * 9176,
+    )
+    shuffled_post_risk = _post_observation_risk(controller, shuffled_defects, anchors)
+    gap_only_risk = torch.ones(controller.num_frames, dtype=torch.float32)
+
     swap_diagnostics = {
         "prior": one_swap_diagnostics(
             anchors=anchors,
@@ -458,7 +495,74 @@ def _probe_entry(
             min_gap=controller.min_gap,
             force_boundaries=controller.force_boundaries,
         ),
+        "gap_only": one_swap_diagnostics(
+            anchors=anchors,
+            interval_costs=interval_costs,
+            predicted_risk=gap_only_risk,
+            gap_power=controller.gap_power,
+            move_penalty=controller.move_penalty,
+            min_gain=controller.min_refresh_gain,
+            min_gap=controller.min_gap,
+            force_boundaries=controller.force_boundaries,
+        ),
+        "shuffled_defect": one_swap_diagnostics(
+            anchors=anchors,
+            interval_costs=interval_costs,
+            predicted_risk=shuffled_post_risk,
+            gap_power=controller.gap_power,
+            move_penalty=controller.move_penalty,
+            min_gain=controller.min_refresh_gain,
+            min_gap=controller.min_gap,
+            force_boundaries=controller.force_boundaries,
+        ),
     }
+
+    counterfactual_operator: dict[str, Any] = {}
+    reference_meshes = {"rhyme": rhyme_anchors, "fixed": fixed_anchors, "fis": fis_anchors}
+    for name in config.probe_counterfactual_methods:
+        mesh = list(reference_meshes[name])
+        if mesh == anchors:
+            candidate_output = sparse_output
+            candidate_propagation = propagation
+        else:
+            candidate_output, _ = _sparse_block_forward(
+                block,
+                block_input,
+                encoder_hidden_states,
+                timestep_projection,
+                rotary_emb,
+                anchors=mesh,
+                geometry=geometry,
+                config=config,
+                compute_defects=False,
+                projection=projection,
+                interpolation_target="state" if name == "fis" else config.interpolation_target,
+            )
+            candidate_propagation = _propagation_diagnostics(
+                blocks=blocks,
+                block_index=block_index,
+                dense_output=dense_output,
+                sparse_output=candidate_output,
+                encoder_hidden_states=encoder_hidden_states,
+                timestep_projection=timestep_projection,
+                rotary_emb=rotary_emb,
+                horizons=tuple(int(value) for value in config.oracle_probe_horizons),
+                geometry=geometry,
+                chunk_size=config.oracle_metric_chunk_size,
+            )
+        candidate_frames = tokens_to_frames(candidate_output, geometry.num_frames, geometry.tokens_per_frame)
+        candidate_delta = candidate_frames - input_frames
+        candidate_realized = reconstruction_metrics(
+            dense_delta,
+            candidate_delta,
+            anchors=mesh,
+            chunk_size=config.oracle_metric_chunk_size,
+        )
+        counterfactual_operator[name] = {
+            "anchors": mesh,
+            "realized_block_delta": candidate_realized,
+            "propagation": candidate_propagation,
+        }
 
     anchor_index = torch.tensor(anchors, device=dense_delta.device, dtype=torch.long)
     anchor_context_delta_relative_l2 = reconstruction_metrics(
@@ -499,6 +603,7 @@ def _probe_entry(
             ),
         },
         "swap_decision": swap_diagnostics,
+        "counterfactual_operator": counterfactual_operator,
         "propagation": propagation,
         # Flat aliases make batch aggregation simple.
         "block_delta_normalized_mse": realized_delta["normalized_mse"],
@@ -515,10 +620,12 @@ def _probe_entry(
         "mesh_current_relative_l2": current_mesh_error,
         "mesh_rhyme_relative_l2": rhyme_mesh_error,
         "mesh_fixed_relative_l2": float(mesh_metrics["fixed"]["relative_l2"]),
+        "mesh_fis_relative_l2": float(mesh_metrics["fis"]["relative_l2"]),
         "mesh_oracle_relative_l2": oracle_mesh_error,
         "mesh_current_nmse": current_mesh_nmse,
         "mesh_rhyme_nmse": rhyme_mesh_nmse,
         "mesh_fixed_nmse": float(mesh_metrics["fixed"]["normalized_mse"]),
+        "mesh_fis_nmse": float(mesh_metrics["fis"]["normalized_mse"]),
         "mesh_oracle_nmse": oracle_mesh_nmse,
         "mesh_headroom_recovery": recovery,
         "mesh_nmse_improvement_over_rhyme": rhyme_mesh_nmse - current_mesh_nmse,
@@ -531,7 +638,26 @@ def _probe_entry(
         "swap_post_observation_regret": swap_diagnostics["post_observation"]["regret"],
         "swap_post_observation_normalized_regret": swap_diagnostics["post_observation"]["normalized_regret"],
         "swap_post_observation_top1_exact": swap_diagnostics["post_observation"]["top1_exact"],
+        "swap_gap_only_gain_recovery": swap_diagnostics["gap_only"]["gain_recovery"],
+        "swap_gap_only_regret": swap_diagnostics["gap_only"]["regret"],
+        "swap_shuffled_gain_recovery": swap_diagnostics["shuffled_defect"]["gain_recovery"],
+        "swap_shuffled_regret": swap_diagnostics["shuffled_defect"]["regret"],
     }
+    for name, payload in counterfactual_operator.items():
+        baseline_nmse = float(payload["realized_block_delta"]["normalized_mse"])
+        result[f"counterfactual_{name}_block_delta_nmse"] = baseline_nmse
+        result[f"operator_nmse_relative_improvement_over_{name}"] = (
+            (baseline_nmse - float(realized_delta["normalized_mse"])) / (baseline_nmse + 1.0e-12)
+        )
+        for horizon, metrics in payload["propagation"].items():
+            result[f"counterfactual_{name}_propagated_relative_l2_h{horizon}"] = metrics["relative_l2"]
+            current_metrics = propagation.get(horizon)
+            if current_metrics is not None:
+                baseline_error = float(metrics["relative_l2"])
+                result[f"propagation_relative_improvement_over_{name}_h{horizon}"] = (
+                    (baseline_error - float(current_metrics["relative_l2"])) / (baseline_error + 1.0e-12)
+                )
+
     for horizon, metrics in propagation.items():
         result[f"propagated_relative_l2_h{horizon}"] = metrics["relative_l2"]
         result[f"propagated_frame_cvar10_h{horizon}"] = metrics["non_anchor_frame_error_cvar10"]
@@ -615,6 +741,15 @@ def coframe_transformer_forward(
             if block_index not in replay_block_anchors:
                 raise KeyError(f"Missing replay anchors for sparse block {block_index}")
             anchors = list(replay_block_anchors[block_index])
+        elif config.method == "fis":
+            anchors = fis_interleaved_select(
+                geometry.num_frames,
+                config.num_anchors,
+                block_index,
+                config.sparse_block_start,
+                force_boundaries=config.force_boundaries,
+                anchor_stride=config.fis_anchor_stride,
+            )
         else:
             anchors = list(controller.anchors)
         metadata.block_anchors[block_index] = anchors
@@ -624,7 +759,14 @@ def coframe_transformer_forward(
         if config.should_probe(step_index, block_index) and replay_block_anchors is None:
             dense_output = block(block_input, encoder_hidden_states, timestep_proj, rotary_emb)
 
-        compute_defects = config.method == "coframe" and replay_block_anchors is None and update_controller
+        compute_defects = (
+            config.method == "coframe"
+            and replay_block_anchors is None
+            and (
+                (update_controller and config.refresh_signal in {"defect", "shuffled"})
+                or dense_output is not None
+            )
+        )
         hidden_states, defects = _sparse_block_forward(
             block,
             block_input,
@@ -636,6 +778,7 @@ def coframe_transformer_forward(
             config=config,
             compute_defects=compute_defects,
             projection=projection,
+            interpolation_target="state" if config.method == "fis" else config.interpolation_target,
         )
 
         if defects:
@@ -672,6 +815,12 @@ def coframe_transformer_forward(
                     anchors=anchors,
                     defects=defects,
                     propagation=propagation,
+                    block=block,
+                    blocks=transformer.blocks,
+                    encoder_hidden_states=encoder_hidden_states,
+                    timestep_projection=timestep_proj,
+                    rotary_emb=rotary_emb,
+                    projection=projection,
                 )
             )
 
@@ -682,26 +831,38 @@ def coframe_transformer_forward(
         )
         if is_group_boundary and replay_block_anchors is None:
             sparse_group_index += 1
-            if compute_defects and group_defects:
+            if config.method == "coframe" and update_controller:
                 aggregated = {
                     frame: sum(values) / len(values)
                     for frame, values in group_defects.items()
                     if values
                 }
-                controller.observe(aggregated, anchors=anchors)
-                if sparse_group_index % config.refresh_every_groups == 0:
+                if config.refresh_signal == "defect" and aggregated:
+                    controller.observe(aggregated, anchors=anchors)
+                elif config.refresh_signal == "shuffled" and aggregated:
+                    shuffled = _shuffle_defects(
+                        {frame: torch.tensor(value) for frame, value in aggregated.items()},
+                        seed=config.shuffle_defect_seed + step_index * 1009 + sparse_group_index * 9176,
+                    )
+                    controller.observe(shuffled, anchors=anchors)
+                # gap_only intentionally leaves a uniform risk field; none freezes the mesh.
+                if (
+                    config.refresh_signal != "none"
+                    and sparse_group_index % config.refresh_every_groups == 0
+                ):
                     refreshes = controller.refresh()
                     for refresh in refreshes:
                         entry = {
                             "step": step_index,
                             "after_block": block_index,
                             "group": sparse_group_index,
+                            "refresh_signal": config.refresh_signal,
                             **refresh.to_dict(),
                         }
                         metadata.refresh_events.append(entry)
                         if trace is not None:
                             trace.add("mesh_refresh", **entry)
-                group_defects = {}
+            group_defects = {}
 
     shift, scale = (transformer.scale_shift_table + temb.unsqueeze(1)).chunk(2, dim=1)
     shift = shift.to(hidden_states.device)

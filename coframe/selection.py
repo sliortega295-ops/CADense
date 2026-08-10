@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import math
 
 import torch
 import torch.nn.functional as F
@@ -172,3 +173,71 @@ def _fill_budget(
         selected_set.add(candidate)
 
     return sorted(selected_set)[:num_anchors]
+
+
+def _fit_interleaved_budget(
+    selected: Sequence[int],
+    *,
+    num_frames: int,
+    num_anchors: int,
+    force_boundaries: bool,
+) -> list[int]:
+    """Keep the FIS residue pattern while matching an exact frame budget."""
+    chosen = sorted({int(i) for i in selected if 0 <= int(i) < num_frames})
+    boundaries = [0, num_frames - 1] if force_boundaries and num_frames > 1 else []
+    chosen = sorted(set(chosen + boundaries))
+
+    if len(chosen) > num_anchors:
+        protected = set(boundaries)
+        interior = [i for i in chosen if i not in protected]
+        keep_n = max(0, num_anchors - len(protected))
+        if keep_n < len(interior):
+            slots = torch.linspace(0, len(interior) - 1, keep_n).round().long().tolist() if keep_n else []
+            interior = [interior[i] for i in sorted(set(slots))]
+        chosen = sorted(set(boundaries + interior))
+
+    while len(chosen) < num_anchors:
+        candidates = [i for i in range(num_frames) if i not in chosen]
+        if not candidates:
+            break
+        candidate = max(
+            candidates,
+            key=lambda i: (
+                min(abs(i - anchor) for anchor in chosen) if chosen else num_frames,
+                -i,
+            ),
+        )
+        chosen.append(candidate)
+        chosen.sort()
+    return chosen[:num_anchors]
+
+
+def fis_interleaved_select(
+    num_frames: int,
+    num_anchors: int,
+    block_index: int,
+    first_sparse_block: int,
+    *,
+    force_boundaries: bool = True,
+    anchor_stride: int = 0,
+) -> list[int]:
+    """FIS-DiT-style interleaved anchor schedule with an exact budget.
+
+    The paper uses r_l=(l-l0) mod n and selects frames satisfying
+    (f-r_l) mod n=0, always keeping temporal boundaries.  For fair matched-K
+    experiments we preserve that rotating residue set and deterministically
+    fill/trim only when boundary insertion changes the exact count.
+    """
+    if num_frames < 1 or num_anchors < 1:
+        raise ValueError("num_frames and num_anchors must be positive")
+    if num_anchors >= num_frames:
+        return list(range(num_frames))
+    stride = int(anchor_stride) if int(anchor_stride) > 0 else max(1, math.ceil(num_frames / num_anchors))
+    phase = (int(block_index) - int(first_sparse_block)) % stride
+    selected = [frame for frame in range(num_frames) if (frame - phase) % stride == 0]
+    return _fit_interleaved_budget(
+        selected,
+        num_frames=num_frames,
+        num_anchors=num_anchors,
+        force_boundaries=force_boundaries,
+    )

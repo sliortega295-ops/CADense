@@ -9,6 +9,7 @@ import torch
 from ..config import CoFrameConfig
 from ..controller import AdaptiveMeshController
 from ..selection import (
+    fis_interleaved_select,
     frame_representations_from_clean_latents,
     rhyme_select,
     transition_scores,
@@ -50,17 +51,37 @@ def _make_controller(
     prior = transition_scores(frame_representations).detach().cpu()
     num_frames = int(clean_proxy.shape[2])
 
+    rhyme_anchors = rhyme_select(
+        frame_representations,
+        config.num_anchors,
+        similarity_threshold=config.rhyme_similarity_threshold,
+        force_boundaries=config.force_boundaries,
+        min_gap=config.min_anchor_gap,
+    )
+    fixed_anchors = uniform_select(num_frames, config.num_anchors, config.force_boundaries)
+
+    controller_prior = prior
+    controller_prior_weight = config.rhyme_prior_weight
     if config.method == "fixed":
-        anchors = uniform_select(num_frames, config.num_anchors, config.force_boundaries)
-        prior = torch.zeros_like(prior)
-    elif config.method in {"rhyme", "coframe"}:
-        anchors = rhyme_select(
-            frame_representations,
+        anchors = fixed_anchors
+        controller_prior = torch.zeros_like(prior)
+        controller_prior_weight = 0.0
+    elif config.method == "fis":
+        anchors = fis_interleaved_select(
+            num_frames,
             config.num_anchors,
-            similarity_threshold=config.rhyme_similarity_threshold,
+            config.sparse_block_start,
+            config.sparse_block_start,
             force_boundaries=config.force_boundaries,
-            min_gap=config.min_anchor_gap,
+            anchor_stride=config.fis_anchor_stride,
         )
+        controller_prior = torch.zeros_like(prior)
+        controller_prior_weight = 0.0
+    elif config.method in {"rhyme", "coframe"}:
+        anchors = rhyme_anchors
+        if config.method == "coframe" and config.refresh_signal == "gap_only":
+            controller_prior = torch.zeros_like(prior)
+            controller_prior_weight = 0.0
     else:
         raise ValueError(f"A sparse controller is not defined for method={config.method}")
 
@@ -68,18 +89,24 @@ def _make_controller(
         num_frames=num_frames,
         num_anchors=config.num_anchors,
         initial_anchors=anchors,
-        prior_scores=prior,
+        prior_scores=controller_prior,
         force_boundaries=config.force_boundaries,
         min_gap=config.min_anchor_gap,
         risk_ema=config.risk_ema,
-        prior_weight=config.rhyme_prior_weight,
-        risk_floor=config.risk_floor,
+        prior_weight=controller_prior_weight,
+        risk_floor=(1.0 if config.method == "coframe" and config.refresh_signal == "gap_only" else config.risk_floor),
         gap_power=config.interval_gap_power,
         move_penalty=config.move_penalty,
         min_refresh_gain=config.min_refresh_gain,
-        max_swaps_per_refresh=config.max_swaps_per_refresh if config.method == "coframe" else 0,
+        max_swaps_per_refresh=(
+            config.max_swaps_per_refresh
+            if config.method == "coframe" and config.refresh_signal != "none"
+            else 0
+        ),
         defect_clip=config.defect_clip,
     )
+    controller.rhyme_reference_anchors = list(rhyme_anchors)
+    controller.fixed_reference_anchors = list(fixed_anchors)
     return controller, anchors, prior
 
 
@@ -197,10 +224,12 @@ def coframe_wan_generate(
     dense_step_count = 0
     sparse_step_count = 0
 
-    # Fixed selection does not need semantic warmup, but we intentionally use
-    # the same dense warmup budget as Rhyme/CoFrame so the comparison isolates
-    # the selector and online refresh rather than early-step compute.
-    if config.method == "dense" or num_inference_steps <= 1:
+    # FIS is prompt-agnostic and can start sparsity at the first denoising
+    # step.  Rhyme/CoFrame keep their semantic warmup.
+    if config.method == "fis":
+        controller, initial_anchors, prior_scores = _make_controller(config=config, clean_proxy=latents)
+        trace.add("mesh_initialization", step=-1, timestep=None, anchors=initial_anchors, prior_scores=prior_scores)
+    if config.method in {"dense", "fis"} or num_inference_steps <= 1:
         effective_warmup = 0
     else:
         # Always leave at least one sparse denoising step, including few-step
@@ -217,7 +246,12 @@ def coframe_wan_generate(
             pipe._current_timestep = timestep_scalar
             timestep = timestep_scalar.expand(latents.shape[0])
 
-            use_sparse = config.method != "dense" and controller is not None and step_index >= effective_warmup
+            use_sparse = (
+                config.method != "dense"
+                and controller is not None
+                and step_index >= effective_warmup
+                and config.is_sparse_step(step_index, num_inference_steps)
+            )
             if not use_sparse:
                 noise_cond = _dense_predict(pipe, latents, timestep_scalar, prompt_embeds, attention_kwargs)
                 if pipe.do_classifier_free_guidance:
