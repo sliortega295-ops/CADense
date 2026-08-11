@@ -1,0 +1,44 @@
+name: Apply CoFrame Stage-1c update
+
+on:
+  push:
+    branches: [agent/coframe-stage1c]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/coframe-stage1c
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply Stage-1c patch
+        run: python tools/apply_stage1c_update.py
+      - name: Install CPU test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install pytest packaging
+          pip install -e . --no-deps --no-build-isolation
+      - name: Validate
+        run: |
+          python -m compileall -q coframe scripts
+          bash -n scripts/run_stage1c_curvature_wan21.sh
+          pytest -q
+      - name: Commit validated update
+        run: |
+          rm -f tools/apply_stage1c_update.py .github/workflows/stage1c-update.yml
+          chmod +x scripts/run_stage1c_curvature_wan21.sh
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat: add Stage-1c offline triage and curvature signal screen'
+          git push origin HEAD:agent/coframe-stage1c
