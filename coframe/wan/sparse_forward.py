@@ -291,6 +291,64 @@ def _shuffle_defects(
     return {key: value for key, value in zip(keys, values)}
 
 
+def _normalize_frame_signal(scores: torch.Tensor, eps: float = 1.0e-8) -> torch.Tensor:
+    values = scores.detach().float().cpu().clamp_min(0.0)
+    if values.numel() <= 2:
+        return values
+    interior = values[1:-1]
+    scale = float(interior.mean().item())
+    if scale > eps:
+        values = (values / scale).clamp_max(10.0)
+    values[0] = 0.0
+    values[-1] = 0.0
+    return values
+
+
+def _temporal_curvature_scores(
+    frame_values: torch.Tensor,
+    projection: torch.Tensor | None,
+    eps: float = 1.0e-8,
+) -> torch.Tensor:
+    """Cheap frame-wise curvature from an already-available [B,F,P,D] state.
+
+    With the default random channel sketch this adds only a small projection and
+    elementwise temporal residual; it does not execute another DiT block.
+    """
+    if frame_values.ndim != 4:
+        raise ValueError("frame_values must be [B,F,P,D]")
+    frame_count = int(frame_values.shape[1])
+    scores = torch.zeros(frame_count, dtype=torch.float32)
+    if frame_count < 3:
+        return scores
+    if projection is not None:
+        reduced = torch.matmul(
+            frame_values,
+            projection.to(device=frame_values.device, dtype=frame_values.dtype),
+        ).float()
+    else:
+        # Deterministic channel subsampling keeps exact-diagnostic mode bounded.
+        stride = max(1, int(frame_values.shape[-1]) // 64)
+        reduced = frame_values[..., ::stride].float()
+    predicted = 0.5 * (reduced[:, :-2] + reduced[:, 2:])
+    center = reduced[:, 1:-1]
+    residual = (center - predicted).square().mean(dim=(0, 2, 3)).sqrt()
+    local_energy = (reduced[:, :-2].square() + center.square() + reduced[:, 2:].square()) / 3.0
+    magnitude = local_energy.mean(dim=(0, 2, 3)).sqrt()
+    scores[1:-1] = (residual / (magnitude + eps)).detach().cpu()
+    return scores
+
+
+def _shuffle_frame_signal(scores: torch.Tensor, *, seed: int) -> torch.Tensor:
+    values = scores.detach().float().cpu().clone()
+    if values.numel() <= 3:
+        return values
+    generator = torch.Generator(device="cpu").manual_seed(int(seed))
+    interior = values[1:-1].clone()
+    order = torch.randperm(interior.numel(), generator=generator)
+    values[1:-1] = interior.index_select(0, order)
+    return values
+
+
 def _propagation_diagnostics(
     *,
     blocks: Any,
@@ -347,6 +405,7 @@ def _probe_entry(
     timestep_projection: torch.Tensor,
     rotary_emb: torch.Tensor,
     projection: torch.Tensor | None,
+    previous_delta_curvature: torch.Tensor | None,
 ) -> dict[str, Any]:
     input_frames = tokens_to_frames(block_input, geometry.num_frames, geometry.tokens_per_frame)
     dense_frames = tokens_to_frames(dense_output, geometry.num_frames, geometry.tokens_per_frame)
@@ -463,6 +522,22 @@ def _probe_entry(
     )
     shuffled_post_risk = _post_observation_risk(controller, shuffled_defects, anchors)
     gap_only_risk = torch.ones(controller.num_frames, dtype=torch.float32)
+    input_curvature = None
+    shuffled_input_curvature = None
+    normalized_previous_delta_curvature = None
+    shuffled_previous_delta_curvature = None
+    if config.probe_curvature_signals:
+        input_curvature = _normalize_frame_signal(_temporal_curvature_scores(input_frames, projection))
+        shuffled_input_curvature = _shuffle_frame_signal(
+            input_curvature,
+            seed=config.curvature_shuffle_seed + step_index * 1009 + block_index * 9176,
+        )
+        if previous_delta_curvature is not None:
+            normalized_previous_delta_curvature = _normalize_frame_signal(previous_delta_curvature)
+            shuffled_previous_delta_curvature = _shuffle_frame_signal(
+                normalized_previous_delta_curvature,
+                seed=config.curvature_shuffle_seed + 17 + step_index * 1009 + block_index * 9176,
+            )
 
     swap_diagnostics = {
         "prior": one_swap_diagnostics(
@@ -516,6 +591,32 @@ def _probe_entry(
             force_boundaries=controller.force_boundaries,
         ),
     }
+    if input_curvature is not None:
+        swap_diagnostics["input_curvature"] = one_swap_diagnostics(
+            anchors=anchors, interval_costs=interval_costs, predicted_risk=input_curvature,
+            gap_power=controller.gap_power, move_penalty=controller.move_penalty,
+            min_gain=controller.min_refresh_gain, min_gap=controller.min_gap,
+            force_boundaries=controller.force_boundaries,
+        )
+        swap_diagnostics["shuffled_input_curvature"] = one_swap_diagnostics(
+            anchors=anchors, interval_costs=interval_costs, predicted_risk=shuffled_input_curvature,
+            gap_power=controller.gap_power, move_penalty=controller.move_penalty,
+            min_gain=controller.min_refresh_gain, min_gap=controller.min_gap,
+            force_boundaries=controller.force_boundaries,
+        )
+    if normalized_previous_delta_curvature is not None:
+        swap_diagnostics["previous_delta_curvature"] = one_swap_diagnostics(
+            anchors=anchors, interval_costs=interval_costs, predicted_risk=normalized_previous_delta_curvature,
+            gap_power=controller.gap_power, move_penalty=controller.move_penalty,
+            min_gain=controller.min_refresh_gain, min_gap=controller.min_gap,
+            force_boundaries=controller.force_boundaries,
+        )
+        swap_diagnostics["shuffled_previous_delta_curvature"] = one_swap_diagnostics(
+            anchors=anchors, interval_costs=interval_costs, predicted_risk=shuffled_previous_delta_curvature,
+            gap_power=controller.gap_power, move_penalty=controller.move_penalty,
+            min_gain=controller.min_refresh_gain, min_gap=controller.min_gap,
+            force_boundaries=controller.force_boundaries,
+        )
 
     counterfactual_operator: dict[str, Any] = {}
     reference_meshes = {"rhyme": rhyme_anchors, "fixed": fixed_anchors, "fis": fis_anchors}
@@ -603,6 +704,10 @@ def _probe_entry(
             ),
         },
         "swap_decision": swap_diagnostics,
+        "input_curvature_scores": None if input_curvature is None else input_curvature.tolist(),
+        "previous_delta_curvature_scores": (
+            None if normalized_previous_delta_curvature is None else normalized_previous_delta_curvature.tolist()
+        ),
         "counterfactual_operator": counterfactual_operator,
         "propagation": propagation,
         # Flat aliases make batch aggregation simple.
@@ -731,6 +836,7 @@ def coframe_transformer_forward(
     )
     group_defects: dict[int, list[float]] = {}
     sparse_group_index = 0
+    previous_delta_curvature: torch.Tensor | None = None
 
     for block_index, block in enumerate(transformer.blocks):
         if not config.is_sparse_block(block_index):
@@ -755,6 +861,7 @@ def coframe_transformer_forward(
         metadata.block_anchors[block_index] = anchors
 
         block_input = hidden_states
+        curvature_from_previous_block = previous_delta_curvature
         dense_output = None
         if config.should_probe(step_index, block_index) and replay_block_anchors is None:
             dense_output = block(block_input, encoder_hidden_states, timestep_proj, rotary_emb)
@@ -780,6 +887,13 @@ def coframe_transformer_forward(
             projection=projection,
             interpolation_target="state" if config.method == "fis" else config.interpolation_target,
         )
+        if config.probe_curvature_signals:
+            if config.should_probe(step_index, block_index + 1):
+                before_frames = tokens_to_frames(block_input, geometry.num_frames, geometry.tokens_per_frame)
+                after_frames = tokens_to_frames(hidden_states, geometry.num_frames, geometry.tokens_per_frame)
+                previous_delta_curvature = _temporal_curvature_scores(after_frames - before_frames, projection)
+            else:
+                previous_delta_curvature = None
 
         if defects:
             defect_values = {frame: float(value.detach().float().item()) for frame, value in defects.items()}
@@ -821,6 +935,7 @@ def coframe_transformer_forward(
                     timestep_projection=timestep_proj,
                     rotary_emb=rotary_emb,
                     projection=projection,
+                    previous_delta_curvature=curvature_from_previous_block,
                 )
             )
 

@@ -73,6 +73,11 @@ class CoFrameConfig:
     oracle_metric_chunk_size: int = 65_536
     probe_counterfactual_methods: Sequence[str] = field(default_factory=lambda: ("rhyme", "fis", "fixed"))
 
+    # Stage-1c signal screening. These diagnostics never change the deployed
+    # mesh; they only rank hypothetical one-swap actions against dense truth.
+    probe_curvature_signals: bool = False
+    curvature_shuffle_seed: int = 20260811
+
     trace_path: str | None = None
     strict_diffusers_version: bool = True
 

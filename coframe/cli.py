@@ -95,6 +95,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--oracle-probe-horizons", type=_csv_ints, default=(1, 3))
     parser.add_argument("--oracle-metric-chunk-size", type=int, default=65_536)
     parser.add_argument("--probe-counterfactual-methods", type=_csv_strings, default=("rhyme", "fis", "fixed"))
+    parser.add_argument("--probe-curvature-signals", action="store_true")
+    parser.add_argument("--curvature-shuffle-seed", type=int, default=20260811)
 
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--run-name", default=None)
@@ -152,6 +154,8 @@ def main(argv: list[str] | None = None) -> int:
         oracle_probe_horizons=args.oracle_probe_horizons,
         oracle_metric_chunk_size=args.oracle_metric_chunk_size,
         probe_counterfactual_methods=args.probe_counterfactual_methods,
+        probe_curvature_signals=args.probe_curvature_signals,
+        curvature_shuffle_seed=args.curvature_shuffle_seed,
         trace_path=str(trace_path),
         strict_diffusers_version=not args.allow_unsupported_diffusers,
     )

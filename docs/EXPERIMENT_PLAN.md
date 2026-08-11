@@ -145,3 +145,28 @@ Primary Stage-B2 decisions:
 2. CoFrame must beat Rhyme and FIS on realized block-delta NMSE from the same input;
 3. the advantage should retain the same sign after +1/+3 dense propagation;
 4. only then run `scripts/run_baselines_wan21.sh` for endpoint fidelity and warmed latency.
+
+
+## Stage C0 / Stage-1c — mechanism pivot after Stage-1b
+
+Stage-1b falsified the current leave-one-out defect **localization** mechanism: true and shuffled defects produced nearly the same actions. Do not tune that signal further. First reuse the existing Stage-1b traces with no GPU:
+
+```bash
+python scripts/analyze_stage1c_offline.py \
+  --root outputs/stage1b \
+  --signal defect \
+  --output outputs/stage1c/offline_analysis.json
+```
+
+The analysis separates (a) prompt dependence of the exact DP oracle mesh from step/block dependence and (b) whether the global defect magnitude can still predict block-level operator or +3 propagation risk. The script emits triage flags, not paper claims.
+
+Only if neither a calibrated step/block schedule nor block-risk gating is supported should GPU time be spent on per-frame signal discovery. The first bounded screen is input temporal curvature plus previous-block delta curvature. These are computed from states that already exist; the probe ranks hypothetical swaps but **does not deploy them**. Run static-Rhyme and gap-only trajectories:
+
+```bash
+bash scripts/run_stage1c_curvature_wan21.sh "<prompt>" outputs/stage1c_curvature/p0_s0 0
+python scripts/summarize_stage1c_curvature.py \
+  --root outputs/stage1c_curvature \
+  --output outputs/stage1c_curvature/summary.json
+```
+
+A curvature signal is worth implementing as a real controller only if it beats gap-only on actionable-cell gain recovery / regret and also beats its own shuffled control. A high same-action rate with shuffled curvature rejects the localization mechanism just as in Stage-1b.
