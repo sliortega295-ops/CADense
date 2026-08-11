@@ -20,6 +20,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Fix curvature normalization in staged patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('tools/apply_stage1c_update.py')
+          text = p.read_text()
+          old = "    magnitude = center.square().mean(dim=(0, 2, 3)).sqrt()\\n"
+          new = (
+              "    local_energy = (reduced[:, :-2].square() + center.square() + reduced[:, 2:].square()) / 3.0\\n"
+              "    magnitude = local_energy.mean(dim=(0, 2, 3)).sqrt()\\n"
+          )
+          if old not in text:
+              raise SystemExit('curvature normalization pattern missing')
+          p.write_text(text.replace(old, new, 1))
+          PY
       - name: Apply Stage-1c patch
         run: python tools/apply_stage1c_update.py
       - name: Install CPU test dependencies
