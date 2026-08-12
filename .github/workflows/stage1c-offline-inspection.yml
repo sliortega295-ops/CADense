@@ -1,0 +1,37 @@
+name: Stage1c offline inspection
+
+on:
+  push:
+    branches: [agent/stage1c-offline-inspection]
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/stage1c-offline-inspection
+          fetch-depth: 0
+      - name: Download small Stage-1c assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p stage1c_snapshot
+          gh release download coframe-stage1c-offline-20260811 \
+            --pattern 'STAGE1C_OFFLINE_REPORT.md' \
+            --pattern 'offline_analysis.json' \
+            --pattern 'offline_supplement.json' \
+            --pattern 'GATE_DECISION.json' \
+            --pattern 'CURVATURE_NOT_RUN.txt' \
+            --dir stage1c_snapshot
+      - name: Commit snapshot
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add stage1c_snapshot
+          git commit -m 'chore: snapshot Stage-1c offline release for inspection'
+          git push origin HEAD:agent/stage1c-offline-inspection
