@@ -1,0 +1,27 @@
+name: Validate final Stage-1d flow
+
+on:
+  push:
+    branches: [agent/coframe-stage1d]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install pytest packaging
+          pip install -e . --no-deps --no-build-isolation
+      - name: Validate Stage-1d
+        run: |
+          python -m compileall -q coframe scripts
+          bash -n scripts/run_stage1d_calibration_wan21.sh
+          bash -n scripts/run_stage1d_adaptive_k_wan21.sh
+          pytest -q
