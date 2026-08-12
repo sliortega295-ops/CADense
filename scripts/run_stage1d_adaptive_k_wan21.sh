@@ -46,8 +46,7 @@ COMMON=(
   --output-dir "$OUT_ROOT"
 )
 
-# Dense endpoint reference. No adaptive budget and no interpretation of its latency
-# when GPUs are shared with unrelated jobs.
+# Dense endpoint reference. Latency is not a primary claim when GPUs are shared.
 python -m coframe.cli \
   --prompt "$PROMPT" --seed "$SEED" \
   --height 480 --width 832 --num-frames 81 \
@@ -55,12 +54,11 @@ python -m coframe.cli \
   --method dense --output-dir "$OUT_ROOT" \
   --run-name "${FOLD_ID}_dense"
 
-# Static exact-frame budget baseline.
-python -m coframe.cli "${COMMON[@]}" \
-  --method fixed \
-  --run-name "${FOLD_ID}_fixed_k9"
+# The uniform K=9 calibration trajectory is run separately by
+# run_stage1d_calibration_wan21.sh and serves as the fixed-budget baseline.
 
-# Prompt-independent schedule calibrated only from the other seven prompts.
+# Prompt-independent step/group budget schedule, calibrated only from the
+# other seven uniform-K9 calibration trajectories.
 python -m coframe.cli "${COMMON[@]}" \
   --method adaptive_k \
   --adaptive-k-policy step_block \
