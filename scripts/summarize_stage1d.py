@@ -51,6 +51,12 @@ def policy_name(summary: dict[str, Any]) -> str:
     config = summary.get("config", {})
     method = summary.get("method", config.get("method", "unknown"))
     if method == "adaptive_k":
+        values = [int(value) for value in config.get("adaptive_k_values", [])]
+        # The dedicated calibration pass uses the identical adaptive runtime but
+        # constrains the only possible budget to K=9. It is therefore the clean
+        # fixed-budget baseline for Stage-1d.
+        if values == [9]:
+            return "fixed_k9"
         return str(config.get("adaptive_k_policy", "adaptive_k"))
     if method == "fixed":
         return "fixed_k9"
