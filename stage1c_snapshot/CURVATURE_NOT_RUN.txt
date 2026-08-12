@@ -1,0 +1,4 @@
+status=NOT_RUN
+reason=The official offline triage emitted TEST_ADAPTIVE_K_OR_DENSE_BLOCK_GATING, not RUN_INPUT_CURVATURE_SIGNAL_SCREEN.
+gpu_jobs_launched=0
+controller_deployed=false

@@ -1,0 +1,259 @@
+{
+  "schema_version": "coframe.stage1c.offline.v1",
+  "input_root": "/data/jiayu/yongyan_liu/CoFrame_stage1b_f240380/outputs/stage1b",
+  "refresh_signal": "defect",
+  "cell_count": 72,
+  "prompt_count": 8,
+  "oracle_structure": {
+    "same_step_block_across_prompts": {
+      "pair_count": 252,
+      "mean_jaccard": 0.4464615741401456,
+      "median_jaccard": 0.38461538461538464,
+      "exact_set_rate": 0.08333333333333333,
+      "mean_normalized_anchor_displacement": 0.03950617283950617,
+      "median_normalized_anchor_displacement": 0.03333333333333333
+    },
+    "same_prompt_step_across_blocks": {
+      "pair_count": 72,
+      "mean_jaccard": 0.8267968142968143,
+      "median_jaccard": 1.0,
+      "exact_set_rate": 0.5277777777777778,
+      "mean_normalized_anchor_displacement": 0.009722222222222222,
+      "median_normalized_anchor_displacement": 0.0
+    },
+    "same_prompt_block_across_steps": {
+      "pair_count": 72,
+      "mean_jaccard": 0.6108266733266733,
+      "median_jaccard": 0.5,
+      "exact_set_rate": 0.25,
+      "mean_normalized_anchor_displacement": 0.04537037037037037,
+      "median_normalized_anchor_displacement": 0.030555555555555558
+    },
+    "consensus_meshes": {
+      "step5_block8": {
+        "medoid_anchors": [
+          0,
+          1,
+          3,
+          4,
+          5,
+          6,
+          8,
+          13,
+          20
+        ],
+        "prompt_count": 8,
+        "exact_medoid_support": 1,
+        "mean_jaccard_to_medoid": 0.525974025974026
+      },
+      "step5_block14": {
+        "medoid_anchors": [
+          0,
+          1,
+          3,
+          4,
+          6,
+          7,
+          12,
+          16,
+          20
+        ],
+        "prompt_count": 8,
+        "exact_medoid_support": 1,
+        "mean_jaccard_to_medoid": 0.5212912087912088
+      },
+      "step5_block20": {
+        "medoid_anchors": [
+          0,
+          1,
+          3,
+          4,
+          6,
+          7,
+          11,
+          15,
+          20
+        ],
+        "prompt_count": 8,
+        "exact_medoid_support": 1,
+        "mean_jaccard_to_medoid": 0.525974025974026
+      },
+      "step20_block8": {
+        "medoid_anchors": [
+          0,
+          1,
+          3,
+          6,
+          9,
+          12,
+          15,
+          17,
+          20
+        ],
+        "prompt_count": 8,
+        "exact_medoid_support": 1,
+        "mean_jaccard_to_medoid": 0.5674450549450549
+      },
+      "step20_block14": {
+        "medoid_anchors": [
+          0,
+          1,
+          3,
+          5,
+          8,
+          11,
+          14,
+          17,
+          20
+        ],
+        "prompt_count": 8,
+        "exact_medoid_support": 3,
+        "mean_jaccard_to_medoid": 0.5782967032967032
+      },
+      "step20_block20": {
+        "medoid_anchors": [
+          0,
+          1,
+          3,
+          5,
+          8,
+          11,
+          14,
+          17,
+          20
+        ],
+        "prompt_count": 8,
+        "exact_medoid_support": 2,
+        "mean_jaccard_to_medoid": 0.5097652347652347
+      },
+      "step40_block8": {
+        "medoid_anchors": [
+          0,
+          1,
+          3,
+          5,
+          8,
+          11,
+          14,
+          17,
+          20
+        ],
+        "prompt_count": 8,
+        "exact_medoid_support": 3,
+        "mean_jaccard_to_medoid": 0.603021978021978
+      },
+      "step40_block14": {
+        "medoid_anchors": [
+          0,
+          1,
+          3,
+          5,
+          8,
+          11,
+          14,
+          17,
+          20
+        ],
+        "prompt_count": 8,
+        "exact_medoid_support": 3,
+        "mean_jaccard_to_medoid": 0.617445054945055
+      },
+      "step40_block20": {
+        "medoid_anchors": [
+          0,
+          1,
+          3,
+          5,
+          8,
+          11,
+          14,
+          17,
+          20
+        ],
+        "prompt_count": 8,
+        "exact_medoid_support": 3,
+        "mean_jaccard_to_medoid": 0.603021978021978
+      }
+    }
+  },
+  "defect_magnitude_block_risk": {
+    "mean_defect_vs_mesh_oracle_nmse": {
+      "count": 72,
+      "pearson": 0.709905487792411,
+      "spearman": 0.7304006688533025,
+      "lopo_spearman_median": 0.7272225422427036,
+      "lopo_spearman_min": 0.7088133640552995,
+      "lopo_spearman_max": 0.7605126728110599
+    },
+    "mean_defect_vs_mesh_fixed_nmse": {
+      "count": 72,
+      "pearson": 0.742365764942467,
+      "spearman": 0.7641648980641842,
+      "lopo_spearman_median": 0.7598646313364055,
+      "lopo_spearman_min": 0.7347350230414746,
+      "lopo_spearman_max": 0.7988671274961597
+    },
+    "mean_defect_vs_operator_nmse": {
+      "count": 72,
+      "pearson": 0.5896447056971666,
+      "spearman": 0.6413595729628915,
+      "lopo_spearman_median": 0.6331125192012288,
+      "lopo_spearman_min": 0.6023425499231951,
+      "lopo_spearman_max": 0.678763440860215
+    },
+    "mean_defect_vs_propagation_h3": {
+      "count": 72,
+      "pearson": -0.3586844643279213,
+      "spearman": -0.21226445430574314,
+      "lopo_spearman_median": -0.2163978494623656,
+      "lopo_spearman_min": -0.27956989247311825,
+      "lopo_spearman_max": -0.154857910906298
+    },
+    "max_defect_vs_mesh_oracle_nmse": {
+      "count": 72,
+      "pearson": 0.7253303921288177,
+      "spearman": 0.7527815293588012,
+      "lopo_spearman_median": 0.752016129032258,
+      "lopo_spearman_min": 0.7250384024577573,
+      "lopo_spearman_max": 0.7764496927803379
+    },
+    "max_defect_vs_mesh_fixed_nmse": {
+      "count": 72,
+      "pearson": 0.7700146568135069,
+      "spearman": 0.7982828477715609,
+      "lopo_spearman_median": 0.7955309139784946,
+      "lopo_spearman_min": 0.7681451612903226,
+      "lopo_spearman_max": 0.8241647465437788
+    },
+    "max_defect_vs_operator_nmse": {
+      "count": 72,
+      "pearson": 0.6558906069931564,
+      "spearman": 0.7023602804038845,
+      "lopo_spearman_median": 0.703509024577573,
+      "lopo_spearman_min": 0.6682027649769585,
+      "lopo_spearman_max": 0.7236943164362519
+    },
+    "max_defect_vs_propagation_h3": {
+      "count": 72,
+      "pearson": -0.3582218846806072,
+      "spearman": -0.28169014084507044,
+      "lopo_spearman_median": -0.28410618279569894,
+      "lopo_spearman_min": -0.33827764976958524,
+      "lopo_spearman_max": -0.2551363287250384
+    }
+  },
+  "decision": {
+    "heuristic_not_preregistered": true,
+    "oracle_prompt_stability_supported": false,
+    "defect_magnitude_block_risk_supported": true,
+    "strongest_defect_block_risk_correlation": [
+      "max_defect_vs_mesh_fixed_nmse",
+      0.7982828477715609,
+      0.7955309139784946
+    ],
+    "next_action_priority": [
+      "TEST_ADAPTIVE_K_OR_DENSE_BLOCK_GATING"
+    ],
+    "note": "These thresholds are triage heuristics. Inspect the paired distributions before making a paper claim."
+  }
+}

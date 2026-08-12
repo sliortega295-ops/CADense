@@ -1,0 +1,43 @@
+{
+  "schema_version": "coframe.stage1c.offline_gate.v1",
+  "source_commit": "d8bb14c66331908bbca4a00347d5bf7fd4b711c2",
+  "input_stage1b_root": "/data/jiayu/yongyan_liu/CoFrame_stage1b_f240380/outputs/stage1b",
+  "input_integrity_after_analysis": {
+    "ok": true,
+    "errors": [],
+    "files_checked": 64
+  },
+  "official_recommendation": [
+    "TEST_ADAPTIVE_K_OR_DENSE_BLOCK_GATING"
+  ],
+  "official_heuristic_not_preregistered": true,
+  "decision": "STOP_AFTER_OFFLINE_AND_TEST_ADAPTIVE_K_OR_DENSE_BLOCK_GATING",
+  "curvature_gpu_screen": {
+    "status": "NOT_RUN",
+    "reason": "Official recommendation did not contain RUN_INPUT_CURVATURE_SIGNAL_SCREEN."
+  },
+  "leave_one_out_defect_localization": {
+    "status": "REJECTED_BY_STAGE1B",
+    "policy": "DO_NOT_TUNE"
+  },
+  "evidence": {
+    "cross_prompt_oracle_median_jaccard": 0.38461538461538464,
+    "cross_prompt_oracle_exact_set_rate": 0.08333333333333333,
+    "max_defect_vs_fixed_nmse_spearman_pooled": 0.7982828477715609,
+    "max_defect_vs_fixed_nmse_lopo_min": 0.7681451612903226,
+    "max_defect_vs_operator_nmse_spearman_pooled": 0.7023602804038845,
+    "mean_defect_vs_fixed_nmse_step_block_centered_spearman": 0.5288121422599524,
+    "max_defect_vs_fixed_nmse_step_block_centered_spearman": 0.20798765193903146,
+    "mean_defect_vs_operator_nmse_step_block_centered_spearman": 0.4369734388063541,
+    "max_defect_vs_operator_nmse_step_block_centered_spearman": 0.11759598688018522,
+    "heldout_oracle_exactly_matches_loo_medoid_rate": 0.0
+  },
+  "next_bounded_test": [
+    "step/block-only K-or-dense schedule",
+    "step/block schedule plus mean-defect scalar adaptation",
+    "max-defect scalar adaptation as an ablation",
+    "leave-one-prompt-out threshold calibration",
+    "budget-matched local operator, +3 propagation, and endpoint gates"
+  ],
+  "claim_boundary": "Defect magnitude may be tested as a scalar compute-allocation risk signal, not a frame-localization signal. Pooled correlations are not a causal paper claim."
+}

@@ -1,0 +1,818 @@
+{
+  "cell_count": 72,
+  "defect_risk_conditioned_on_step_block": {
+    "max_defect_vs_mesh_fixed_nmse": {
+      "conditioning": "Both predictor and target are centered within each (denoising step, DiT block) cell.",
+      "count": 72,
+      "lopo_pearson": {
+        "count": 8,
+        "max": 0.47221282214669913,
+        "mean": 0.3143590710043402,
+        "median": 0.3058267174515213,
+        "min": 0.1667067499154625,
+        "q25": 0.27080781764449313,
+        "q75": 0.3580951248069751
+      },
+      "lopo_spearman": {
+        "count": 8,
+        "max": 0.3577188940092166,
+        "mean": 0.2057231662826421,
+        "median": 0.1926363287250384,
+        "min": 0.10963901689708141,
+        "q25": 0.14080501152073732,
+        "q75": 0.25619239631336405
+      },
+      "pearson": 0.3185471426968904,
+      "spearman": 0.20798765193903146
+    },
+    "max_defect_vs_mesh_oracle_nmse": {
+      "conditioning": "Both predictor and target are centered within each (denoising step, DiT block) cell.",
+      "count": 72,
+      "lopo_pearson": {
+        "count": 8,
+        "max": 0.3375128719101876,
+        "mean": 0.27941981844625813,
+        "median": 0.2873624929408246,
+        "min": 0.18257947770676342,
+        "q25": 0.2549412864377085,
+        "q75": 0.31459294317421155
+      },
+      "lopo_spearman": {
+        "count": 8,
+        "max": 0.25825652841781876,
+        "mean": 0.18098358294930875,
+        "median": 0.18332373271889402,
+        "min": 0.08986175115207373,
+        "q25": 0.15752208141321045,
+        "q75": 0.21790994623655913
+      },
+      "pearson": 0.2818123976016979,
+      "spearman": 0.17602418161939676
+    },
+    "max_defect_vs_operator_nmse": {
+      "conditioning": "Both predictor and target are centered within each (denoising step, DiT block) cell.",
+      "count": 72,
+      "lopo_pearson": {
+        "count": 8,
+        "max": 0.27416741959860313,
+        "mean": 0.19365571768269968,
+        "median": 0.18450926879763324,
+        "min": 0.12869178180082672,
+        "q25": 0.1544440465221922,
+        "q75": 0.2307510473679613
+      },
+      "lopo_spearman": {
+        "count": 8,
+        "max": 0.21087749615975424,
+        "mean": 0.1259120583717358,
+        "median": 0.12005568356374807,
+        "min": 0.019921274961597544,
+        "q25": 0.09043778801843318,
+        "q75": 0.16496255760368664
+      },
+      "pearson": 0.19599972101409918,
+      "spearman": 0.11759598688018522
+    },
+    "max_defect_vs_propagation_h3": {
+      "conditioning": "Both predictor and target are centered within each (denoising step, DiT block) cell.",
+      "count": 72,
+      "lopo_pearson": {
+        "count": 8,
+        "max": 0.1294674631888262,
+        "mean": 0.03015222254480746,
+        "median": 0.017753532455415125,
+        "min": -0.026024837328341852,
+        "q25": 0.003972874717540079,
+        "q75": 0.04602240118385698
+      },
+      "lopo_spearman": {
+        "count": 8,
+        "max": 0.06024385560675883,
+        "mean": -0.051963325652841785,
+        "median": -0.04596294162826421,
+        "min": -0.14088901689708141,
+        "q25": -0.1021505376344086,
+        "q75": -0.02605366743471582
+      },
+      "pearson": 0.02915322555343072,
+      "spearman": -0.06376615859540806
+    },
+    "mean_defect_vs_mesh_fixed_nmse": {
+      "conditioning": "Both predictor and target are centered within each (denoising step, DiT block) cell.",
+      "count": 72,
+      "lopo_pearson": {
+        "count": 8,
+        "max": 0.6822269459263824,
+        "mean": 0.5675150385515915,
+        "median": 0.5658154598450287,
+        "min": 0.483678140254201,
+        "q25": 0.5278329705353428,
+        "q75": 0.5885386057326727
+      },
+      "lopo_spearman": {
+        "count": 8,
+        "max": 0.6473214285714286,
+        "mean": 0.5181931643625192,
+        "median": 0.5114007296466974,
+        "min": 0.42871543778801846,
+        "q25": 0.47217021889400923,
+        "q75": 0.5625240015360984
+      },
+      "pearson": 0.5687242593222259,
+      "spearman": 0.5288121422599524
+    },
+    "mean_defect_vs_mesh_oracle_nmse": {
+      "conditioning": "Both predictor and target are centered within each (denoising step, DiT block) cell.",
+      "count": 72,
+      "lopo_pearson": {
+        "count": 8,
+        "max": 0.6646490673233967,
+        "mean": 0.6005850629304166,
+        "median": 0.6004536568539962,
+        "min": 0.5204417997534656,
+        "q25": 0.5784568555051521,
+        "q75": 0.638612694352528
+      },
+      "lopo_spearman": {
+        "count": 8,
+        "max": 0.6354646697388633,
+        "mean": 0.5686263920890937,
+        "median": 0.582613287250384,
+        "min": 0.4533890168970814,
+        "q25": 0.5372383832565284,
+        "q75": 0.6286602342549923
+      },
+      "pearson": 0.6006882647595744,
+      "spearman": 0.5756640298411474
+    },
+    "mean_defect_vs_operator_nmse": {
+      "conditioning": "Both predictor and target are centered within each (denoising step, DiT block) cell.",
+      "count": 72,
+      "lopo_pearson": {
+        "count": 8,
+        "max": 0.5360757422924559,
+        "mean": 0.43661358612996093,
+        "median": 0.44256616478885935,
+        "min": 0.31419600754693294,
+        "q25": 0.4060139157664955,
+        "q75": 0.4848169810222533
+      },
+      "lopo_spearman": {
+        "count": 8,
+        "max": 0.5201612903225806,
+        "mean": 0.42772537442396313,
+        "median": 0.45118087557603687,
+        "min": 0.2961309523809524,
+        "q25": 0.4050739247311828,
+        "q75": 0.47751056067588327
+      },
+      "pearson": 0.4371034323142642,
+      "spearman": 0.4369734388063541
+    },
+    "mean_defect_vs_propagation_h3": {
+      "conditioning": "Both predictor and target are centered within each (denoising step, DiT block) cell.",
+      "count": 72,
+      "lopo_pearson": {
+        "count": 8,
+        "max": 0.41622273038433366,
+        "mean": 0.3072927707518163,
+        "median": 0.3233955139067725,
+        "min": 0.17381493670236234,
+        "q25": 0.28210075174531457,
+        "q75": 0.3437581496469616
+      },
+      "lopo_spearman": {
+        "count": 8,
+        "max": 0.4144585253456221,
+        "mean": 0.30153729838709675,
+        "median": 0.3297811059907834,
+        "min": 0.12768817204301075,
+        "q25": 0.27737375192012287,
+        "q75": 0.35968701996927804
+      },
+      "pearson": 0.30601670385751994,
+      "spearman": 0.3091517139365876
+    }
+  },
+  "defect_risk_within_each_step_block": {
+    "max_defect_vs_mesh_fixed_nmse": {
+      "across_cell_summary": {
+        "count": 9,
+        "max": 0.7142857142857143,
+        "mean": 0.10582010582010583,
+        "median": 0.30952380952380953,
+        "min": -0.8571428571428571,
+        "q25": -0.5238095238095238,
+        "q75": 0.6190476190476191
+      },
+      "cell_spearman": {
+        "step20_block14": {
+          "count": 8,
+          "spearman": 0.30952380952380953
+        },
+        "step20_block20": {
+          "count": 8,
+          "spearman": 0.0
+        },
+        "step20_block8": {
+          "count": 8,
+          "spearman": 0.7142857142857143
+        },
+        "step40_block14": {
+          "count": 8,
+          "spearman": 0.6190476190476191
+        },
+        "step40_block20": {
+          "count": 8,
+          "spearman": 0.5238095238095238
+        },
+        "step40_block8": {
+          "count": 8,
+          "spearman": 0.7142857142857143
+        },
+        "step5_block14": {
+          "count": 8,
+          "spearman": -0.8571428571428571
+        },
+        "step5_block20": {
+          "count": 8,
+          "spearman": -0.5476190476190477
+        },
+        "step5_block8": {
+          "count": 8,
+          "spearman": -0.5238095238095238
+        }
+      }
+    },
+    "max_defect_vs_mesh_oracle_nmse": {
+      "across_cell_summary": {
+        "count": 9,
+        "max": 0.7380952380952381,
+        "mean": 0.13756613756613756,
+        "median": 0.11904761904761904,
+        "min": -0.7619047619047619,
+        "q25": -0.11904761904761904,
+        "q75": 0.6190476190476191
+      },
+      "cell_spearman": {
+        "step20_block14": {
+          "count": 8,
+          "spearman": 0.023809523809523808
+        },
+        "step20_block20": {
+          "count": 8,
+          "spearman": -0.11904761904761904
+        },
+        "step20_block8": {
+          "count": 8,
+          "spearman": 0.7380952380952381
+        },
+        "step40_block14": {
+          "count": 8,
+          "spearman": 0.6190476190476191
+        },
+        "step40_block20": {
+          "count": 8,
+          "spearman": 0.4523809523809524
+        },
+        "step40_block8": {
+          "count": 8,
+          "spearman": 0.6904761904761905
+        },
+        "step5_block14": {
+          "count": 8,
+          "spearman": -0.7619047619047619
+        },
+        "step5_block20": {
+          "count": 8,
+          "spearman": -0.5238095238095238
+        },
+        "step5_block8": {
+          "count": 8,
+          "spearman": 0.11904761904761904
+        }
+      }
+    },
+    "max_defect_vs_operator_nmse": {
+      "across_cell_summary": {
+        "count": 9,
+        "max": 0.7380952380952381,
+        "mean": 0.1402116402116402,
+        "median": 0.11904761904761904,
+        "min": -0.7380952380952381,
+        "q25": -0.19047619047619047,
+        "q75": 0.6190476190476191
+      },
+      "cell_spearman": {
+        "step20_block14": {
+          "count": 8,
+          "spearman": -0.023809523809523808
+        },
+        "step20_block20": {
+          "count": 8,
+          "spearman": -0.19047619047619047
+        },
+        "step20_block8": {
+          "count": 8,
+          "spearman": 0.7380952380952381
+        },
+        "step40_block14": {
+          "count": 8,
+          "spearman": 0.6190476190476191
+        },
+        "step40_block20": {
+          "count": 8,
+          "spearman": 0.23809523809523808
+        },
+        "step40_block8": {
+          "count": 8,
+          "spearman": 0.6904761904761905
+        },
+        "step5_block14": {
+          "count": 8,
+          "spearman": -0.7380952380952381
+        },
+        "step5_block20": {
+          "count": 8,
+          "spearman": -0.19047619047619047
+        },
+        "step5_block8": {
+          "count": 8,
+          "spearman": 0.11904761904761904
+        }
+      }
+    },
+    "max_defect_vs_propagation_h3": {
+      "across_cell_summary": {
+        "count": 9,
+        "max": 0.5,
+        "mean": -0.07407407407407407,
+        "median": -0.09523809523809523,
+        "min": -0.6666666666666666,
+        "q25": -0.2619047619047619,
+        "q75": 0.07142857142857142
+      },
+      "cell_spearman": {
+        "step20_block14": {
+          "count": 8,
+          "spearman": -0.19047619047619047
+        },
+        "step20_block20": {
+          "count": 8,
+          "spearman": -0.2619047619047619
+        },
+        "step20_block8": {
+          "count": 8,
+          "spearman": 0.07142857142857142
+        },
+        "step40_block14": {
+          "count": 8,
+          "spearman": 0.23809523809523808
+        },
+        "step40_block20": {
+          "count": 8,
+          "spearman": -0.09523809523809523
+        },
+        "step40_block8": {
+          "count": 8,
+          "spearman": 0.5
+        },
+        "step5_block14": {
+          "count": 8,
+          "spearman": -0.6666666666666666
+        },
+        "step5_block20": {
+          "count": 8,
+          "spearman": -0.30952380952380953
+        },
+        "step5_block8": {
+          "count": 8,
+          "spearman": 0.047619047619047616
+        }
+      }
+    },
+    "mean_defect_vs_mesh_fixed_nmse": {
+      "across_cell_summary": {
+        "count": 9,
+        "max": 0.8809523809523809,
+        "mean": 0.4576719576719576,
+        "median": 0.6666666666666666,
+        "min": -0.30952380952380953,
+        "q25": 0.07142857142857142,
+        "q75": 0.7142857142857143
+      },
+      "cell_spearman": {
+        "step20_block14": {
+          "count": 8,
+          "spearman": 0.6428571428571429
+        },
+        "step20_block20": {
+          "count": 8,
+          "spearman": 0.6666666666666666
+        },
+        "step20_block8": {
+          "count": 8,
+          "spearman": 0.7619047619047619
+        },
+        "step40_block14": {
+          "count": 8,
+          "spearman": 0.7142857142857143
+        },
+        "step40_block20": {
+          "count": 8,
+          "spearman": 0.7142857142857143
+        },
+        "step40_block8": {
+          "count": 8,
+          "spearman": 0.8809523809523809
+        },
+        "step5_block14": {
+          "count": 8,
+          "spearman": -0.30952380952380953
+        },
+        "step5_block20": {
+          "count": 8,
+          "spearman": 0.07142857142857142
+        },
+        "step5_block8": {
+          "count": 8,
+          "spearman": -0.023809523809523808
+        }
+      }
+    },
+    "mean_defect_vs_mesh_oracle_nmse": {
+      "across_cell_summary": {
+        "count": 9,
+        "max": 0.9285714285714286,
+        "mean": 0.5291005291005291,
+        "median": 0.5238095238095238,
+        "min": -0.047619047619047616,
+        "q25": 0.47619047619047616,
+        "q75": 0.6190476190476191
+      },
+      "cell_spearman": {
+        "step20_block14": {
+          "count": 8,
+          "spearman": 0.5238095238095238
+        },
+        "step20_block20": {
+          "count": 8,
+          "spearman": 0.5952380952380952
+        },
+        "step20_block8": {
+          "count": 8,
+          "spearman": 0.9285714285714286
+        },
+        "step40_block14": {
+          "count": 8,
+          "spearman": 0.5
+        },
+        "step40_block20": {
+          "count": 8,
+          "spearman": 0.6190476190476191
+        },
+        "step40_block8": {
+          "count": 8,
+          "spearman": 0.8333333333333334
+        },
+        "step5_block14": {
+          "count": 8,
+          "spearman": -0.047619047619047616
+        },
+        "step5_block20": {
+          "count": 8,
+          "spearman": 0.3333333333333333
+        },
+        "step5_block8": {
+          "count": 8,
+          "spearman": 0.47619047619047616
+        }
+      }
+    },
+    "mean_defect_vs_operator_nmse": {
+      "across_cell_summary": {
+        "count": 9,
+        "max": 0.9285714285714286,
+        "mean": 0.4417989417989418,
+        "median": 0.47619047619047616,
+        "min": -0.14285714285714285,
+        "q25": 0.4523809523809524,
+        "q75": 0.5
+      },
+      "cell_spearman": {
+        "step20_block14": {
+          "count": 8,
+          "spearman": 0.5
+        },
+        "step20_block20": {
+          "count": 8,
+          "spearman": 0.4523809523809524
+        },
+        "step20_block8": {
+          "count": 8,
+          "spearman": 0.9285714285714286
+        },
+        "step40_block14": {
+          "count": 8,
+          "spearman": 0.5
+        },
+        "step40_block20": {
+          "count": 8,
+          "spearman": 0.47619047619047616
+        },
+        "step40_block8": {
+          "count": 8,
+          "spearman": 0.8333333333333334
+        },
+        "step5_block14": {
+          "count": 8,
+          "spearman": -0.14285714285714285
+        },
+        "step5_block20": {
+          "count": 8,
+          "spearman": -0.047619047619047616
+        },
+        "step5_block8": {
+          "count": 8,
+          "spearman": 0.47619047619047616
+        }
+      }
+    },
+    "mean_defect_vs_propagation_h3": {
+      "across_cell_summary": {
+        "count": 9,
+        "max": 0.6428571428571429,
+        "mean": 0.29365079365079366,
+        "median": 0.2857142857142857,
+        "min": -0.16666666666666666,
+        "q25": 0.047619047619047616,
+        "q75": 0.5238095238095238
+      },
+      "cell_spearman": {
+        "step20_block14": {
+          "count": 8,
+          "spearman": 0.5238095238095238
+        },
+        "step20_block20": {
+          "count": 8,
+          "spearman": 0.47619047619047616
+        },
+        "step20_block8": {
+          "count": 8,
+          "spearman": 0.5952380952380952
+        },
+        "step40_block14": {
+          "count": 8,
+          "spearman": 0.23809523809523808
+        },
+        "step40_block20": {
+          "count": 8,
+          "spearman": 0.2857142857142857
+        },
+        "step40_block8": {
+          "count": 8,
+          "spearman": 0.6428571428571429
+        },
+        "step5_block14": {
+          "count": 8,
+          "spearman": -0.16666666666666666
+        },
+        "step5_block20": {
+          "count": 8,
+          "spearman": 0.0
+        },
+        "step5_block8": {
+          "count": 8,
+          "spearman": 0.047619047619047616
+        }
+      }
+    }
+  },
+  "gpu_used": false,
+  "input_root": "/data/jiayu/yongyan_liu/CoFrame_stage1b_f240380/outputs/stage1b",
+  "official_gate": {
+    "defect_magnitude_block_risk_supported": true,
+    "heuristic_not_preregistered": true,
+    "next_action_priority": [
+      "TEST_ADAPTIVE_K_OR_DENSE_BLOCK_GATING"
+    ],
+    "note": "These thresholds are triage heuristics. Inspect the paired distributions before making a paper claim.",
+    "oracle_prompt_stability_supported": false,
+    "strongest_defect_block_risk_correlation": [
+      "max_defect_vs_mesh_fixed_nmse",
+      0.7982828477715609,
+      0.7955309139784946
+    ]
+  },
+  "oracle_prompt_loo_stability": {
+    "cell_count": 9,
+    "cells": {
+      "step20_block14": {
+        "full_medoid": [
+          0,
+          1,
+          3,
+          5,
+          8,
+          11,
+          14,
+          17,
+          20
+        ],
+        "full_medoid_exact_support": 3,
+        "heldout_oracle_jaccard_to_loo_medoid_mean": 0.31043956043956045,
+        "heldout_oracle_matches_loo_medoid_rate": 0.0,
+        "loo_medoid_jaccard_to_full_mean": 0.7321428571428571,
+        "loo_medoid_matches_full_rate": 0.625,
+        "unique_oracle_meshes": 4
+      },
+      "step20_block20": {
+        "full_medoid": [
+          0,
+          1,
+          3,
+          5,
+          8,
+          11,
+          14,
+          17,
+          20
+        ],
+        "full_medoid_exact_support": 2,
+        "heldout_oracle_jaccard_to_loo_medoid_mean": 0.28736263736263734,
+        "heldout_oracle_matches_loo_medoid_rate": 0.0,
+        "loo_medoid_jaccard_to_full_mean": 0.7321428571428571,
+        "loo_medoid_matches_full_rate": 0.625,
+        "unique_oracle_meshes": 6
+      },
+      "step20_block8": {
+        "full_medoid": [
+          0,
+          1,
+          3,
+          6,
+          9,
+          12,
+          15,
+          17,
+          20
+        ],
+        "full_medoid_exact_support": 1,
+        "heldout_oracle_jaccard_to_loo_medoid_mean": 0.34958791208791207,
+        "heldout_oracle_matches_loo_medoid_rate": 0.0,
+        "loo_medoid_jaccard_to_full_mean": 0.7067307692307693,
+        "loo_medoid_matches_full_rate": 0.5,
+        "unique_oracle_meshes": 6
+      },
+      "step40_block14": {
+        "full_medoid": [
+          0,
+          1,
+          3,
+          5,
+          8,
+          11,
+          14,
+          17,
+          20
+        ],
+        "full_medoid_exact_support": 3,
+        "heldout_oracle_jaccard_to_loo_medoid_mean": 0.42994505494505497,
+        "heldout_oracle_matches_loo_medoid_rate": 0.0,
+        "loo_medoid_jaccard_to_full_mean": 0.8125,
+        "loo_medoid_matches_full_rate": 0.625,
+        "unique_oracle_meshes": 6
+      },
+      "step40_block20": {
+        "full_medoid": [
+          0,
+          1,
+          3,
+          5,
+          8,
+          11,
+          14,
+          17,
+          20
+        ],
+        "full_medoid_exact_support": 3,
+        "heldout_oracle_jaccard_to_loo_medoid_mean": 0.37225274725274726,
+        "heldout_oracle_matches_loo_medoid_rate": 0.0,
+        "loo_medoid_jaccard_to_full_mean": 0.7692307692307693,
+        "loo_medoid_matches_full_rate": 0.625,
+        "unique_oracle_meshes": 5
+      },
+      "step40_block8": {
+        "full_medoid": [
+          0,
+          1,
+          3,
+          5,
+          8,
+          11,
+          14,
+          17,
+          20
+        ],
+        "full_medoid_exact_support": 3,
+        "heldout_oracle_jaccard_to_loo_medoid_mean": 0.37225274725274726,
+        "heldout_oracle_matches_loo_medoid_rate": 0.0,
+        "loo_medoid_jaccard_to_full_mean": 0.7692307692307693,
+        "loo_medoid_matches_full_rate": 0.625,
+        "unique_oracle_meshes": 5
+      },
+      "step5_block14": {
+        "full_medoid": [
+          0,
+          1,
+          3,
+          4,
+          6,
+          7,
+          12,
+          16,
+          20
+        ],
+        "full_medoid_exact_support": 1,
+        "heldout_oracle_jaccard_to_loo_medoid_mean": 0.38873626373626374,
+        "heldout_oracle_matches_loo_medoid_rate": 0.0,
+        "loo_medoid_jaccard_to_full_mean": 0.7355769230769231,
+        "loo_medoid_matches_full_rate": 0.5,
+        "unique_oracle_meshes": 8
+      },
+      "step5_block20": {
+        "full_medoid": [
+          0,
+          1,
+          3,
+          4,
+          6,
+          7,
+          11,
+          15,
+          20
+        ],
+        "full_medoid_exact_support": 1,
+        "heldout_oracle_jaccard_to_loo_medoid_mean": 0.39285714285714285,
+        "heldout_oracle_matches_loo_medoid_rate": 0.0,
+        "loo_medoid_jaccard_to_full_mean": 0.8125,
+        "loo_medoid_matches_full_rate": 0.625,
+        "unique_oracle_meshes": 8
+      },
+      "step5_block8": {
+        "full_medoid": [
+          0,
+          1,
+          3,
+          4,
+          5,
+          6,
+          8,
+          13,
+          20
+        ],
+        "full_medoid_exact_support": 1,
+        "heldout_oracle_jaccard_to_loo_medoid_mean": 0.3945054945054945,
+        "heldout_oracle_matches_loo_medoid_rate": 0.0,
+        "loo_medoid_jaccard_to_full_mean": 0.8125,
+        "loo_medoid_matches_full_rate": 0.625,
+        "unique_oracle_meshes": 8
+      }
+    },
+    "leave_one_prompt_out": {
+      "heldout_oracle_jaccard_to_loo_medoid": {
+        "count": 72,
+        "max": 0.5,
+        "mean": 0.36643772893772897,
+        "median": 0.38461538461538464,
+        "min": 0.2,
+        "q25": 0.2857142857142857,
+        "q75": 0.38461538461538464
+      },
+      "heldout_oracle_matches_loo_medoid_rate": 0.0,
+      "loo_medoid_jaccard_to_full": {
+        "count": 72,
+        "max": 1.0,
+        "mean": 0.7647283272283273,
+        "median": 1.0,
+        "min": 0.2857142857142857,
+        "q25": 0.5,
+        "q75": 1.0
+      },
+      "loo_medoid_matches_full_rate": 0.5972222222222222,
+      "split_count": 72
+    },
+    "unique_mesh_count_per_cell": {
+      "count": 9,
+      "max": 8.0,
+      "mean": 6.222222222222222,
+      "median": 6.0,
+      "min": 4.0,
+      "q25": 5.0,
+      "q75": 8.0
+    }
+  },
+  "prompt_count": 8,
+  "schema_version": "coframe.stage1c.offline_supplement.v1",
+  "source_commit": "d8bb14c66331908bbca4a00347d5bf7fd4b711c2"
+}
