@@ -62,7 +62,7 @@ def _make_controller(
 
     controller_prior = prior
     controller_prior_weight = config.rhyme_prior_weight
-    if config.method == "fixed":
+    if config.method in {"fixed", "adaptive_k"}:
         anchors = fixed_anchors
         controller_prior = torch.zeros_like(prior)
         controller_prior_weight = 0.0
@@ -291,7 +291,7 @@ def coframe_wan_generate(
                     controller=controller,
                     step_index=step_index,
                     replay_block_anchors=None,
-                    update_controller=config.method == "coframe",
+                    update_controller=config.method in {"coframe", "adaptive_k"},
                     attention_kwargs=attention_kwargs,
                     trace=trace,
                 )
@@ -333,6 +333,7 @@ def coframe_wan_generate(
         "sparse_steps": sparse_step_count,
         "initial_anchors": initial_anchors,
         "final_anchors": None if controller is None else list(controller.anchors),
+        "final_budget": None if controller is None else int(controller.current_budget),
         "latent_shape": list(latents.shape),
         "transformer_events": transformer_events,
         "controller": None if controller is None else controller.state_dict(),

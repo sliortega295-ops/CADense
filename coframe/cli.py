@@ -30,6 +30,12 @@ def _csv_ints(value: str) -> tuple[int, ...]:
     return tuple(int(item.strip()) for item in value.split(",") if item.strip())
 
 
+def _csv_floats(value: str) -> tuple[float, ...]:
+    if not value.strip():
+        return ()
+    return tuple(float(item.strip()) for item in value.split(",") if item.strip())
+
+
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -60,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-id", default="Wan-AI/Wan2.1-T2V-1.3B-Diffusers")
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--negative-prompt", default=DEFAULT_NEGATIVE_PROMPT)
-    parser.add_argument("--method", choices=["dense", "fixed", "fis", "rhyme", "coframe"], default="coframe")
+    parser.add_argument("--method", choices=["dense", "fixed", "fis", "rhyme", "coframe", "adaptive_k"], default="coframe")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--width", type=int, default=832)
@@ -97,6 +103,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--probe-counterfactual-methods", type=_csv_strings, default=("rhyme", "fis", "fixed"))
     parser.add_argument("--probe-curvature-signals", action="store_true")
     parser.add_argument("--curvature-shuffle-seed", type=int, default=20260811)
+    parser.add_argument("--adaptive-k-policy", choices=["none", "step_block", "mean_defect", "max_defect"], default="none")
+    parser.add_argument("--adaptive-k-values", type=_csv_ints, default=(6, 9, 12, 21))
+    parser.add_argument("--adaptive-k-thresholds", type=_csv_floats, default=())
+    parser.add_argument("--adaptive-k-schedule-json", type=Path, default=None)
+    parser.add_argument("--no-adaptive-k-carry", action="store_true")
 
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--run-name", default=None)
@@ -125,6 +136,12 @@ def main(argv: list[str] | None = None) -> int:
     latent_path = run_dir / "latents.pt"
     trace_path = run_dir / "trace.json"
     video_path = run_dir / "video.mp4"
+
+    adaptive_k_schedule = {}
+    if args.adaptive_k_schedule_json is not None:
+        adaptive_k_schedule = json.loads(args.adaptive_k_schedule_json.read_text(encoding="utf-8"))
+        if not isinstance(adaptive_k_schedule, dict):
+            raise ValueError("adaptive-k schedule JSON must contain an object mapping step:group to K")
 
     config = CoFrameConfig(
         method=args.method,
@@ -156,6 +173,11 @@ def main(argv: list[str] | None = None) -> int:
         probe_counterfactual_methods=args.probe_counterfactual_methods,
         probe_curvature_signals=args.probe_curvature_signals,
         curvature_shuffle_seed=args.curvature_shuffle_seed,
+        adaptive_k_policy=args.adaptive_k_policy,
+        adaptive_k_values=args.adaptive_k_values,
+        adaptive_k_thresholds=args.adaptive_k_thresholds,
+        adaptive_k_schedule={str(key): int(value) for key, value in adaptive_k_schedule.items()},
+        adaptive_k_carry_across_steps=not args.no_adaptive_k_carry,
         trace_path=str(trace_path),
         strict_diffusers_version=not args.allow_unsupported_diffusers,
     )
