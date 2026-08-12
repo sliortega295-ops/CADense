@@ -81,13 +81,13 @@ class ConditionEmbedder(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self):
+    def __init__(self, num_blocks=2):
         super().__init__()
         self.config = SimpleNamespace(patch_size=(1, 1, 1), out_channels=2, in_channels=2)
         self.rope = Rope()
         self.patch_embedding = nn.Conv3d(2, 4, kernel_size=1, bias=False)
         self.condition_embedder = ConditionEmbedder(4)
-        self.blocks = nn.ModuleList([Block(4), Block(4)])
+        self.blocks = nn.ModuleList([Block(4) for _ in range(num_blocks)])
         self.scale_shift_table = nn.Parameter(torch.zeros(1, 2, 4))
         self.norm_out = nn.Identity()
         self.proj_out = nn.Linear(4, 2, bias=False)
@@ -161,3 +161,52 @@ def test_conditional_schedule_can_be_replayed_for_cfg(monkeypatch):
     assert probe["propagated_relative_l2_h1"] >= 0.0
     assert torch.isfinite(conditional).all()
     assert torch.isfinite(unconditional).all()
+
+
+def test_calibrated_budget_surface_is_counterfactual_and_complete(monkeypatch):
+    monkeypatch.setattr(sparse_module, "require_diffusers_034", lambda strict=True: "0.34.0")
+    torch.manual_seed(23)
+    transformer = Transformer(num_blocks=30)
+    hidden = torch.randn(1, 2, 21, 1, 1)
+    timestep = torch.tensor([500.0])
+    context = torch.randn(1, 3, 4)
+    config = CoFrameConfig(
+        method="adaptive_k",
+        adaptive_k_policy="step_block",
+        num_anchors=9,
+        sparse_block_start=3,
+        sparse_block_end=27,
+        block_group_size=3,
+        kv_mode="full_kv",
+        calibrated_budget_probe_mode="surface",
+    )
+    controller = AdaptiveMeshController(
+        num_frames=21,
+        num_anchors=9,
+        initial_anchors=[0, 2, 5, 8, 10, 12, 15, 18, 20],
+        prior_scores=torch.zeros(21),
+        prior_weight=0.0,
+    )
+
+    output, metadata = sparse_module.coframe_transformer_forward(
+        transformer,
+        hidden,
+        timestep,
+        context,
+        config=config,
+        controller=controller,
+        step_index=5,
+        update_controller=True,
+    )
+
+    assert output.shape == hidden.shape
+    assert len(metadata.budget_group_probes) == 8
+    assert all(entry["matched_input"] and not entry["deployed"] for entry in metadata.budget_group_probes)
+    assert all(entry["evaluated_budgets"] == [6, 9, 12, 21] for entry in metadata.budget_group_probes)
+    assert all(set(entry["candidates"]) == {"6", "9", "12", "21"} for entry in metadata.budget_group_probes)
+    assert all(entry["trajectory_assigned_k"] == 9 for entry in metadata.budget_group_probes)
+    assert max(
+        entry["candidates"]["21"]["operator_delta"]["normalized_mse"]
+        for entry in metadata.budget_group_probes
+    ) < 1.0e-10
+    assert torch.isfinite(output).all()

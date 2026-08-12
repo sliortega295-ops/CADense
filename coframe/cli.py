@@ -108,6 +108,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--adaptive-k-thresholds", type=_csv_floats, default=())
     parser.add_argument("--adaptive-k-schedule-json", type=Path, default=None)
     parser.add_argument("--no-adaptive-k-carry", action="store_true")
+    parser.add_argument(
+        "--calibrated-budget-probe-mode",
+        choices=["none", "surface", "current"],
+        default="none",
+        help=(
+            "Probe group-level dense-referenced error without changing the trajectory: "
+            "surface evaluates K={6,9,12,21}; current evaluates the assigned schedule K"
+        ),
+    )
 
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--run-name", default=None)
@@ -178,6 +187,7 @@ def main(argv: list[str] | None = None) -> int:
         adaptive_k_thresholds=args.adaptive_k_thresholds,
         adaptive_k_schedule={str(key): int(value) for key, value in adaptive_k_schedule.items()},
         adaptive_k_carry_across_steps=not args.no_adaptive_k_carry,
+        calibrated_budget_probe_mode=args.calibrated_budget_probe_mode,
         trace_path=str(trace_path),
         strict_diffusers_version=not args.allow_unsupported_diffusers,
     )

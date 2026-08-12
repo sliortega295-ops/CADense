@@ -6,6 +6,7 @@ from typing import Any, Literal, Sequence
 Method = Literal["dense", "fixed", "fis", "rhyme", "coframe", "adaptive_k"]
 RefreshSignal = Literal["defect", "none", "gap_only", "shuffled"]
 BudgetPolicy = Literal["none", "step_block", "mean_defect", "max_defect"]
+CalibratedBudgetProbeMode = Literal["none", "surface", "current"]
 KVMode = Literal["anchor_only", "full_kv"]
 InterpolationTarget = Literal["delta", "state"]
 DefectTarget = Literal["delta", "state"]
@@ -88,6 +89,12 @@ class CoFrameConfig:
     adaptive_k_schedule: dict[str, int] = field(default_factory=dict)
     adaptive_k_carry_across_steps: bool = True
 
+    # Counterfactual group-level diagnostics for the calibrated step/block
+    # budget experiment. "surface" evaluates all preregistered K values from
+    # one matched group input; "current" evaluates only the deployed schedule's
+    # K. Neither mode changes the generation trajectory.
+    calibrated_budget_probe_mode: CalibratedBudgetProbeMode = "none"
+
     trace_path: str | None = None
     strict_diffusers_version: bool = True
 
@@ -98,6 +105,10 @@ class CoFrameConfig:
             raise ValueError(f"Unsupported refresh_signal: {self.refresh_signal}")
         if self.adaptive_k_policy not in {"none", "step_block", "mean_defect", "max_defect"}:
             raise ValueError(f"Unsupported adaptive_k_policy: {self.adaptive_k_policy}")
+        if self.calibrated_budget_probe_mode not in {"none", "surface", "current"}:
+            raise ValueError(
+                f"Unsupported calibrated_budget_probe_mode: {self.calibrated_budget_probe_mode}"
+            )
         if self.method == "adaptive_k" and self.adaptive_k_policy == "none":
             raise ValueError("method=adaptive_k requires an adaptive_k_policy")
         budget_values = [int(value) for value in self.adaptive_k_values]
@@ -114,6 +125,19 @@ class CoFrameConfig:
             invalid_schedule = [value for value in self.adaptive_k_schedule.values() if int(value) not in budget_values]
             if invalid_schedule:
                 raise ValueError("adaptive_k_schedule contains a budget outside adaptive_k_values")
+        if self.calibrated_budget_probe_mode != "none":
+            if self.method != "adaptive_k" or self.adaptive_k_policy != "step_block":
+                raise ValueError("calibrated budget probes require adaptive_k with step_block policy")
+            if tuple(budget_values) != (6, 9, 12, 21):
+                raise ValueError("calibrated budget probes are preregistered with K in {6,9,12,21}")
+            if self.kv_mode != "full_kv":
+                raise ValueError("calibrated budget probes require full_kv")
+            if self.interpolation_target != "delta":
+                raise ValueError("calibrated budget probes require delta interpolation")
+            if (self.sparse_block_start, self.sparse_block_end, self.block_group_size) != (3, 27, 3):
+                raise ValueError("calibrated budget probes require sparse blocks 3-26 in groups of 3")
+            if self.num_anchors != 9:
+                raise ValueError("calibrated budget probes require the K=9 default budget")
         if self.fis_anchor_stride < 0:
             raise ValueError("fis_anchor_stride must be >= 0")
         if self.fis_dense_tail_steps < 0:
@@ -157,6 +181,8 @@ class CoFrameConfig:
         if self.oracle_metric_chunk_size < 1:
             raise ValueError("oracle_metric_chunk_size must be positive")
         if num_blocks is not None:
+            if self.calibrated_budget_probe_mode != "none" and num_blocks < 30:
+                raise ValueError("calibrated budget +3 propagation requires at least 30 blocks")
             if not 0 <= self.sparse_block_start <= num_blocks:
                 raise ValueError("sparse_block_start is out of range")
             if not self.sparse_block_start <= self.sparse_block_end <= num_blocks:

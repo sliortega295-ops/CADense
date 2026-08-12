@@ -58,6 +58,7 @@ class TransformerForwardMetadata:
     budget_events: list[dict[str, Any]]
     defects: list[dict[str, Any]]
     probes: list[dict[str, Any]]
+    budget_group_probes: list[dict[str, Any]]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -67,6 +68,7 @@ class TransformerForwardMetadata:
             "budget_events": self.budget_events,
             "defects": self.defects,
             "probes": self.probes,
+            "budget_group_probes": self.budget_group_probes,
         }
 
 
@@ -387,6 +389,145 @@ def _propagation_diagnostics(
                 chunk_size=chunk_size,
             )
     return results
+
+
+def _compact_reconstruction_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Keep all scalar diagnostics while avoiding per-frame trace inflation."""
+    return {
+        key: value
+        for key, value in metrics.items()
+        if key not in {"per_frame_relative_rms", "per_frame_global_normalized_rms"}
+    }
+
+
+def _calibrated_budget_group_probe(
+    *,
+    step_index: int,
+    group_index: int,
+    group_start: int,
+    group_end: int,
+    group_input: torch.Tensor,
+    evaluated_budgets: tuple[int, ...],
+    trajectory_assigned_k: int,
+    blocks: Any,
+    encoder_hidden_states: torch.Tensor,
+    timestep_projection: torch.Tensor,
+    rotary_emb: torch.Tensor,
+    geometry: FrameGeometry,
+    config: CoFrameConfig,
+    projection: torch.Tensor | None,
+) -> dict[str, Any]:
+    """Measure a matched-input group operator surface without deployment.
+
+    The dense reference, each uniform-K three-block sparse operator, and the
+    subsequent three dense propagation blocks all start from the same group
+    input. Candidate branches are discarded after measurement and therefore
+    cannot affect the generation trajectory.
+    """
+    if group_end - group_start + 1 != config.block_group_size:
+        raise ValueError("calibrated budget probes require complete three-block groups")
+    propagation_end = group_end + 3
+    if propagation_end >= len(blocks):
+        raise ValueError("calibrated budget probes require three following dense blocks")
+
+    dense_group = group_input
+    for block_index in range(group_start, group_end + 1):
+        dense_group = blocks[block_index](
+            dense_group,
+            encoder_hidden_states,
+            timestep_projection,
+            rotary_emb,
+        )
+    dense_propagated = dense_group
+    for block_index in range(group_end + 1, propagation_end + 1):
+        dense_propagated = blocks[block_index](
+            dense_propagated,
+            encoder_hidden_states,
+            timestep_projection,
+            rotary_emb,
+        )
+
+    input_frames = tokens_to_frames(group_input, geometry.num_frames, geometry.tokens_per_frame)
+    dense_group_frames = tokens_to_frames(dense_group, geometry.num_frames, geometry.tokens_per_frame)
+    dense_delta = dense_group_frames - input_frames
+    dense_propagated_frames = tokens_to_frames(
+        dense_propagated,
+        geometry.num_frames,
+        geometry.tokens_per_frame,
+    )
+
+    candidates: dict[str, Any] = {}
+    for budget in evaluated_budgets:
+        anchors = uniform_select(
+            geometry.num_frames,
+            int(budget),
+            config.force_boundaries,
+        )
+        candidate_group = group_input
+        for block_index in range(group_start, group_end + 1):
+            candidate_group, _ = _sparse_block_forward(
+                blocks[block_index],
+                candidate_group,
+                encoder_hidden_states,
+                timestep_projection,
+                rotary_emb,
+                anchors=anchors,
+                geometry=geometry,
+                config=config,
+                compute_defects=False,
+                projection=projection,
+                interpolation_target=config.interpolation_target,
+            )
+        candidate_group_frames = tokens_to_frames(
+            candidate_group,
+            geometry.num_frames,
+            geometry.tokens_per_frame,
+        )
+        candidate_delta = candidate_group_frames - input_frames
+        operator = reconstruction_metrics(
+            dense_delta,
+            candidate_delta,
+            anchors=anchors,
+            chunk_size=config.oracle_metric_chunk_size,
+        )
+
+        candidate_propagated = candidate_group
+        for block_index in range(group_end + 1, propagation_end + 1):
+            candidate_propagated = blocks[block_index](
+                candidate_propagated,
+                encoder_hidden_states,
+                timestep_projection,
+                rotary_emb,
+            )
+        candidate_propagated_frames = tokens_to_frames(
+            candidate_propagated,
+            geometry.num_frames,
+            geometry.tokens_per_frame,
+        )
+        propagation = reconstruction_metrics(
+            dense_propagated_frames,
+            candidate_propagated_frames,
+            chunk_size=config.oracle_metric_chunk_size,
+        )
+        candidates[str(int(budget))] = {
+            "k": int(budget),
+            "anchors": anchors,
+            "operator_delta": _compact_reconstruction_metrics(operator),
+            "propagation_h3": _compact_reconstruction_metrics(propagation),
+        }
+
+    return {
+        "step": int(step_index),
+        "group": int(group_index),
+        "block_start": int(group_start),
+        "block_end": int(group_end),
+        "propagation_end_block": int(propagation_end),
+        "trajectory_assigned_k": int(trajectory_assigned_k),
+        "evaluated_budgets": [int(value) for value in evaluated_budgets],
+        "matched_input": True,
+        "deployed": False,
+        "candidates": candidates,
+    }
 
 
 def _probe_entry(
@@ -843,6 +984,7 @@ def coframe_transformer_forward(
         budget_events=[],
         defects=[],
         probes=[],
+        budget_group_probes=[],
     )
     group_defects: dict[int, list[float]] = {}
     sparse_group_index = 0
@@ -900,6 +1042,34 @@ def coframe_transformer_forward(
         metadata.block_anchors[block_index] = anchors
 
         block_input = hidden_states
+        if (
+            replay_block_anchors is None
+            and is_group_start
+            and config.calibrated_budget_probe_mode != "none"
+        ):
+            evaluated_budgets = (
+                tuple(int(value) for value in config.adaptive_k_values)
+                if config.calibrated_budget_probe_mode == "surface"
+                else (len(anchors),)
+            )
+            metadata.budget_group_probes.append(
+                _calibrated_budget_group_probe(
+                    step_index=step_index,
+                    group_index=adaptive_group_index,
+                    group_start=block_index,
+                    group_end=block_index + config.block_group_size - 1,
+                    group_input=block_input,
+                    evaluated_budgets=evaluated_budgets,
+                    trajectory_assigned_k=len(anchors),
+                    blocks=transformer.blocks,
+                    encoder_hidden_states=encoder_hidden_states,
+                    timestep_projection=timestep_proj,
+                    rotary_emb=rotary_emb,
+                    geometry=geometry,
+                    config=config,
+                    projection=projection,
+                )
+            )
         curvature_from_previous_block = previous_delta_curvature
         dense_output = None
         if config.should_probe(step_index, block_index) and replay_block_anchors is None:
