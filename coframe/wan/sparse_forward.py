@@ -20,6 +20,7 @@ from ..interpolation import (
     tokens_to_frames,
 )
 from ..metrics import (
+    OracleMeshResult,
     frame_gram_matrix,
     headroom_recovery,
     interpolation_interval_costs,
@@ -58,6 +59,7 @@ class TransformerForwardMetadata:
     budget_events: list[dict[str, Any]]
     defects: list[dict[str, Any]]
     probes: list[dict[str, Any]]
+    entry_state_proxy_dp: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -67,6 +69,7 @@ class TransformerForwardMetadata:
             "budget_events": self.budget_events,
             "defects": self.defects,
             "probes": self.probes,
+            "entry_state_proxy_dp": self.entry_state_proxy_dp,
         }
 
 
@@ -152,6 +155,56 @@ def _build_projection(
     projection = projection.to(device=device, dtype=dtype)
     _PROJECTION_CACHE[key] = projection
     return projection
+
+
+def _entry_state_proxy_dp_mesh(
+    frame_values: torch.Tensor,
+    projection: torch.Tensor | None,
+    *,
+    num_anchors: int,
+    sketch_dim: int,
+    min_gap: int,
+    force_boundaries: bool,
+    chunk_size: int,
+) -> OracleMeshResult:
+    """Select a fixed-budget mesh from the complete block-2 entry state.
+
+    ``frame_values`` is the already-computed dense state in [B,F,P,D] layout.
+    The preregistered screen uses the existing deterministic 64-d channel
+    projection, constructs exact linear-interpolation interval costs on that
+    sketch, and reuses the repository's O(KF^2) exact DP.
+    """
+    if frame_values.ndim != 4:
+        raise ValueError("entry-state frame_values must be [B,F,P,D]")
+    hidden_dim = int(frame_values.shape[-1])
+    if projection is None:
+        if hidden_dim != int(sketch_dim):
+            raise ValueError(
+                "Entry-State Proxy-DP requires an explicit 64-d projection "
+                "unless the hidden state is already exactly 64-d"
+            )
+        sketch = frame_values
+    else:
+        if tuple(projection.shape) != (hidden_dim, int(sketch_dim)):
+            raise ValueError(
+                f"entry-state projection shape {tuple(projection.shape)} does not match "
+                f"({hidden_dim}, {int(sketch_dim)})"
+            )
+        sketch = torch.matmul(
+            frame_values,
+            projection.to(device=frame_values.device, dtype=frame_values.dtype),
+        )
+
+    gram = frame_gram_matrix(sketch, chunk_size=chunk_size)
+    interval_costs = interpolation_interval_costs(gram)
+    total_energy = float(torch.diagonal(gram).sum().item())
+    return optimal_piecewise_linear_mesh(
+        interval_costs,
+        num_anchors=num_anchors,
+        total_energy=total_energy,
+        min_gap=min_gap,
+        force_boundaries=force_boundaries,
+    )
 
 
 def _sparse_block_forward(
@@ -409,6 +462,7 @@ def _probe_entry(
     rotary_emb: torch.Tensor,
     projection: torch.Tensor | None,
     previous_delta_curvature: torch.Tensor | None,
+    entry_state_proxy_dp: OracleMeshResult | None,
 ) -> dict[str, Any]:
     input_frames = tokens_to_frames(block_input, geometry.num_frames, geometry.tokens_per_frame)
     dense_frames = tokens_to_frames(dense_output, geometry.num_frames, geometry.tokens_per_frame)
@@ -490,13 +544,38 @@ def _probe_entry(
         force_boundaries=config.force_boundaries,
     )
 
+    # Gap-only is the existing prompt-independent one-swap mesh regularizer,
+    # evaluated from the same current Rhyme mesh and the same dense block truth.
+    # Its chosen action depends only on a uniform risk field; dense truth is
+    # used by one_swap_diagnostics solely to score the hypothetical action.
+    gap_only_risk = torch.ones(controller.num_frames, dtype=torch.float32)
+    gap_only_diagnostic = one_swap_diagnostics(
+        anchors=anchors,
+        interval_costs=interval_costs,
+        predicted_risk=gap_only_risk,
+        gap_power=controller.gap_power,
+        move_penalty=controller.move_penalty,
+        min_gain=controller.min_refresh_gain,
+        min_gap=controller.min_gap,
+        force_boundaries=controller.force_boundaries,
+    )
+    gap_only_action = gap_only_diagnostic.get("predicted_best_swap") or {}
+    gap_only_anchors = list(gap_only_action.get("anchors", anchors))
+
     meshes = {
         "current": list(anchors),
         "rhyme": rhyme_anchors,
         "fixed": fixed_anchors,
         "fis": fis_anchors,
+        "gap_only": gap_only_anchors,
         "oracle": oracle.anchors,
     }
+    if config.probe_entry_state_proxy_dp:
+        if entry_state_proxy_dp is None:
+            raise RuntimeError("Entry-State Proxy-DP mesh was not captured after dense block 2")
+        if len(entry_state_proxy_dp.anchors) != probe_budget:
+            raise RuntimeError("Entry-State Proxy-DP budget differs from the probe budget")
+        meshes["entry_state_proxy_dp"] = list(entry_state_proxy_dp.anchors)
     metric_cache: dict[tuple[int, ...], dict[str, Any]] = {}
     mesh_metrics: dict[str, dict[str, Any]] = {}
     for name, mesh in meshes.items():
@@ -529,7 +608,6 @@ def _probe_entry(
         seed=config.shuffle_defect_seed + step_index * 1009 + block_index * 9176,
     )
     shuffled_post_risk = _post_observation_risk(controller, shuffled_defects, anchors)
-    gap_only_risk = torch.ones(controller.num_frames, dtype=torch.float32)
     input_curvature = None
     shuffled_input_curvature = None
     normalized_previous_delta_curvature = None
@@ -578,16 +656,7 @@ def _probe_entry(
             min_gap=controller.min_gap,
             force_boundaries=controller.force_boundaries,
         ),
-        "gap_only": one_swap_diagnostics(
-            anchors=anchors,
-            interval_costs=interval_costs,
-            predicted_risk=gap_only_risk,
-            gap_power=controller.gap_power,
-            move_penalty=controller.move_penalty,
-            min_gain=controller.min_refresh_gain,
-            min_gap=controller.min_gap,
-            force_boundaries=controller.force_boundaries,
-        ),
+        "gap_only": gap_only_diagnostic,
         "shuffled_defect": one_swap_diagnostics(
             anchors=anchors,
             interval_costs=interval_costs,
@@ -628,7 +697,12 @@ def _probe_entry(
 
     counterfactual_operator: dict[str, Any] = {}
     reference_meshes = {"rhyme": rhyme_anchors, "fixed": fixed_anchors, "fis": fis_anchors}
-    for name in config.probe_counterfactual_methods:
+    counterfactual_names = list(config.probe_counterfactual_methods)
+    if config.probe_entry_state_proxy_dp:
+        reference_meshes["gap_only"] = gap_only_anchors
+        reference_meshes["entry_state_proxy_dp"] = list(entry_state_proxy_dp.anchors)
+        counterfactual_names.extend(["gap_only", "entry_state_proxy_dp"])
+    for name in dict.fromkeys(counterfactual_names):
         mesh = list(reference_meshes[name])
         if mesh == anchors:
             candidate_output = sparse_output
@@ -705,6 +779,9 @@ def _probe_entry(
         "mesh_only": {
             **mesh_metrics,
             "oracle": {**mesh_metrics["oracle"], **oracle.to_dict()},
+            "entry_state_proxy_objective": (
+                None if entry_state_proxy_dp is None else entry_state_proxy_dp.to_dict()
+            ),
             "headroom_recovery": recovery,
             "current_oracle_excess": current_mesh_error - oracle_mesh_error,
             "current_oracle_nmse_regret": current_mesh_nmse - oracle_mesh_nmse,
@@ -735,11 +812,13 @@ def _probe_entry(
         "mesh_rhyme_relative_l2": rhyme_mesh_error,
         "mesh_fixed_relative_l2": float(mesh_metrics["fixed"]["relative_l2"]),
         "mesh_fis_relative_l2": float(mesh_metrics["fis"]["relative_l2"]),
+        "mesh_gap_only_relative_l2": float(mesh_metrics["gap_only"]["relative_l2"]),
         "mesh_oracle_relative_l2": oracle_mesh_error,
         "mesh_current_nmse": current_mesh_nmse,
         "mesh_rhyme_nmse": rhyme_mesh_nmse,
         "mesh_fixed_nmse": float(mesh_metrics["fixed"]["normalized_mse"]),
         "mesh_fis_nmse": float(mesh_metrics["fis"]["normalized_mse"]),
+        "mesh_gap_only_nmse": float(mesh_metrics["gap_only"]["normalized_mse"]),
         "mesh_oracle_nmse": oracle_mesh_nmse,
         "mesh_headroom_recovery": recovery,
         "mesh_nmse_improvement_over_rhyme": rhyme_mesh_nmse - current_mesh_nmse,
@@ -757,6 +836,30 @@ def _probe_entry(
         "swap_shuffled_gain_recovery": swap_diagnostics["shuffled_defect"]["gain_recovery"],
         "swap_shuffled_regret": swap_diagnostics["shuffled_defect"]["regret"],
     }
+    if config.probe_entry_state_proxy_dp:
+        proxy_nmse = float(mesh_metrics["entry_state_proxy_dp"]["normalized_mse"])
+        proxy_relative_l2 = float(mesh_metrics["entry_state_proxy_dp"]["relative_l2"])
+        result.update(
+            {
+                "entry_state_proxy_block": 2,
+                "entry_state_proxy_sketch_dim": config.sketch_dim,
+                "entry_state_proxy_anchors": list(entry_state_proxy_dp.anchors),
+                "mesh_entry_state_proxy_dp_nmse": proxy_nmse,
+                "mesh_entry_state_proxy_dp_relative_l2": proxy_relative_l2,
+                "mesh_entry_state_proxy_dp_oracle_nmse_regret": proxy_nmse - oracle_mesh_nmse,
+                "mesh_entry_state_proxy_dp_oracle_relative_l2_regret": proxy_relative_l2 - oracle_mesh_error,
+            }
+        )
+        for baseline in ("fixed", "fis", "rhyme", "gap_only"):
+            baseline_nmse = float(mesh_metrics[baseline]["normalized_mse"])
+            result[f"mesh_entry_state_proxy_dp_relative_improvement_over_{baseline}"] = (
+                (baseline_nmse - proxy_nmse) / (baseline_nmse + 1.0e-12)
+            )
+            result[f"mesh_entry_state_proxy_dp_headroom_recovery_vs_{baseline}"] = headroom_recovery(
+                baseline_error=baseline_nmse,
+                method_error=proxy_nmse,
+                oracle_error=oracle_mesh_nmse,
+            )
     for name, payload in counterfactual_operator.items():
         baseline_nmse = float(payload["realized_block_delta"]["normalized_mse"])
         result[f"counterfactual_{name}_block_delta_nmse"] = baseline_nmse
@@ -770,6 +873,24 @@ def _probe_entry(
                 baseline_error = float(metrics["relative_l2"])
                 result[f"propagation_relative_improvement_over_{name}_h{horizon}"] = (
                     (baseline_error - float(current_metrics["relative_l2"])) / (baseline_error + 1.0e-12)
+                )
+
+    if config.probe_entry_state_proxy_dp:
+        proxy_operator = counterfactual_operator["entry_state_proxy_dp"]
+        proxy_operator_nmse = float(proxy_operator["realized_block_delta"]["normalized_mse"])
+        for baseline in ("fixed", "fis", "rhyme", "gap_only"):
+            baseline_operator = counterfactual_operator[baseline]
+            baseline_nmse = float(baseline_operator["realized_block_delta"]["normalized_mse"])
+            result[f"entry_state_proxy_operator_relative_improvement_over_{baseline}"] = (
+                (baseline_nmse - proxy_operator_nmse) / (baseline_nmse + 1.0e-12)
+            )
+            for horizon, proxy_metrics in proxy_operator["propagation"].items():
+                baseline_metrics = baseline_operator["propagation"].get(horizon)
+                if baseline_metrics is None:
+                    continue
+                baseline_error = float(baseline_metrics["relative_l2"])
+                result[f"entry_state_proxy_propagation_relative_improvement_over_{baseline}_h{horizon}"] = (
+                    (baseline_error - float(proxy_metrics["relative_l2"])) / (baseline_error + 1.0e-12)
                 )
 
     for horizon, metrics in propagation.items():
@@ -835,6 +956,12 @@ def coframe_transformer_forward(
         device=hidden_states.device,
         dtype=hidden_states.dtype,
     )
+    if (
+        config.probe_entry_state_proxy_dp
+        and projection is None
+        and int(hidden_states.shape[-1]) != config.sketch_dim
+    ):
+        raise RuntimeError("Entry-State Proxy-DP could not construct the preregistered 64-d sketch")
 
     metadata = TransformerForwardMetadata(
         step_index=step_index,
@@ -847,12 +974,34 @@ def coframe_transformer_forward(
     group_defects: dict[int, list[float]] = {}
     sparse_group_index = 0
     previous_delta_curvature: torch.Tensor | None = None
+    entry_state_proxy_dp: OracleMeshResult | None = None
     if config.method == "adaptive_k" and not config.adaptive_k_carry_across_steps:
         controller.current_budget = int(config.num_anchors)
 
     for block_index, block in enumerate(transformer.blocks):
         if not config.is_sparse_block(block_index):
             hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
+            if config.probe_entry_state_proxy_dp and replay_block_anchors is None and block_index == 2:
+                entry_frames = tokens_to_frames(
+                    hidden_states,
+                    geometry.num_frames,
+                    geometry.tokens_per_frame,
+                )
+                entry_state_proxy_dp = _entry_state_proxy_dp_mesh(
+                    entry_frames,
+                    projection,
+                    num_anchors=config.num_anchors,
+                    sketch_dim=config.sketch_dim,
+                    min_gap=config.min_anchor_gap,
+                    force_boundaries=config.force_boundaries,
+                    chunk_size=config.oracle_metric_chunk_size,
+                )
+                metadata.entry_state_proxy_dp = {
+                    "source_block": 2,
+                    "sketch_dim": config.sketch_dim,
+                    "deployed": False,
+                    **entry_state_proxy_dp.to_dict(),
+                }
             continue
 
         relative_zero = block_index - config.sparse_block_start
@@ -910,11 +1059,17 @@ def coframe_transformer_forward(
             and (
                 (
                     config.method == "coframe"
-                    and ((update_controller and config.refresh_signal in {"defect", "shuffled"}) or dense_output is not None)
+                    and (
+                        (update_controller and config.refresh_signal in {"defect", "shuffled"})
+                        or (dense_output is not None and not config.probe_entry_state_proxy_dp)
+                    )
                 )
                 or (
                     config.method == "adaptive_k"
-                    and ((update_controller and config.adaptive_k_policy in {"mean_defect", "max_defect"}) or dense_output is not None)
+                    and (
+                        (update_controller and config.adaptive_k_policy in {"mean_defect", "max_defect"})
+                        or (dense_output is not None and not config.probe_entry_state_proxy_dp)
+                    )
                 )
             )
         )
@@ -980,6 +1135,7 @@ def coframe_transformer_forward(
                     rotary_emb=rotary_emb,
                     projection=projection,
                     previous_delta_curvature=curvature_from_previous_block,
+                    entry_state_proxy_dp=entry_state_proxy_dp,
                 )
             )
 

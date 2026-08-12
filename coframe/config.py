@@ -79,6 +79,12 @@ class CoFrameConfig:
     probe_curvature_signals: bool = False
     curvature_shuffle_seed: int = 20260811
 
+    # Entry-State Proxy-DP signal screen. The proxy mesh is computed once per
+    # denoising step from the complete hidden state after zero-indexed block 2
+    # and is evaluated counterfactually at later probe blocks. It never changes
+    # the generation trajectory.
+    probe_entry_state_proxy_dp: bool = False
+
     # Stage-1d: causal exact-frame budget allocation. Frame placement is
     # deliberately uniform so this experiment isolates "how much to compute"
     # from the rejected defect-localization/remeshing mechanism.
@@ -152,11 +158,25 @@ class CoFrameConfig:
             raise ValueError("refresh_every_groups must be >= 1")
         if self.sketch_dim < 0:
             raise ValueError("sketch_dim must be >= 0")
+        if self.probe_entry_state_proxy_dp and self.sketch_dim != 64:
+            raise ValueError("Entry-State Proxy-DP screen is preregistered with sketch_dim=64")
+        if self.probe_entry_state_proxy_dp and self.method != "coframe":
+            raise ValueError("Entry-State Proxy-DP screen requires method=coframe")
+        if self.probe_entry_state_proxy_dp and self.refresh_signal != "none":
+            raise ValueError("Entry-State Proxy-DP is counterfactual-only and requires refresh_signal=none")
+        if self.probe_entry_state_proxy_dp and self.num_anchors != 9:
+            raise ValueError("Entry-State Proxy-DP screen is preregistered with num_anchors=9")
+        if self.probe_entry_state_proxy_dp and self.probe_curvature_signals:
+            raise ValueError("Entry-State Proxy-DP screen cannot enable curvature selectors")
+        if self.probe_entry_state_proxy_dp and self.sparse_block_start <= 2:
+            raise ValueError("Entry-State Proxy-DP requires blocks 0-2 to remain dense")
         if any(int(horizon) <= 0 for horizon in self.oracle_probe_horizons):
             raise ValueError("oracle_probe_horizons must contain positive integers")
         if self.oracle_metric_chunk_size < 1:
             raise ValueError("oracle_metric_chunk_size must be positive")
         if num_blocks is not None:
+            if self.probe_entry_state_proxy_dp and num_blocks <= 2:
+                raise ValueError("Entry-State Proxy-DP requires zero-indexed block 2")
             if not 0 <= self.sparse_block_start <= num_blocks:
                 raise ValueError("sparse_block_start is out of range")
             if not self.sparse_block_start <= self.sparse_block_end <= num_blocks:

@@ -103,6 +103,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--probe-counterfactual-methods", type=_csv_strings, default=("rhyme", "fis", "fixed"))
     parser.add_argument("--probe-curvature-signals", action="store_true")
     parser.add_argument("--curvature-shuffle-seed", type=int, default=20260811)
+    parser.add_argument(
+        "--probe-entry-state-proxy-dp",
+        action="store_true",
+        help=(
+            "Counterfactually evaluate a K=9 exact-DP mesh derived from the 64-d "
+            "hidden-state sketch after dense block 2; never deploys the mesh"
+        ),
+    )
     parser.add_argument("--adaptive-k-policy", choices=["none", "step_block", "mean_defect", "max_defect"], default="none")
     parser.add_argument("--adaptive-k-values", type=_csv_ints, default=(6, 9, 12, 21))
     parser.add_argument("--adaptive-k-thresholds", type=_csv_floats, default=())
@@ -173,6 +181,7 @@ def main(argv: list[str] | None = None) -> int:
         probe_counterfactual_methods=args.probe_counterfactual_methods,
         probe_curvature_signals=args.probe_curvature_signals,
         curvature_shuffle_seed=args.curvature_shuffle_seed,
+        probe_entry_state_proxy_dp=args.probe_entry_state_proxy_dp,
         adaptive_k_policy=args.adaptive_k_policy,
         adaptive_k_values=args.adaptive_k_values,
         adaptive_k_thresholds=args.adaptive_k_thresholds,
