@@ -1,0 +1,58 @@
+{
+  "schema_version": "coframe.trajectory-interaction-screen.v1",
+  "experiment_id": "trajectory-interaction-screen-20260812",
+  "base_trajectory_k": 9,
+  "arms": [
+    "k9_k9",
+    "k6_k9",
+    "k9_k12",
+    "k6_k12",
+    "k12_k9",
+    "k9_k6",
+    "k12_k6"
+  ],
+  "pairs": [
+    {
+      "pair_id": "step05_g0_g1_adjacent",
+      "step": 5,
+      "group_i": 0,
+      "group_j": 1,
+      "distance": "adjacent"
+    },
+    {
+      "pair_id": "step05_g0_g7_long",
+      "step": 5,
+      "group_i": 0,
+      "group_j": 7,
+      "distance": "long"
+    },
+    {
+      "pair_id": "step20_g3_g4_adjacent",
+      "step": 20,
+      "group_i": 3,
+      "group_j": 4,
+      "distance": "adjacent"
+    },
+    {
+      "pair_id": "step20_g0_g7_long",
+      "step": 20,
+      "group_i": 0,
+      "group_j": 7,
+      "distance": "long"
+    },
+    {
+      "pair_id": "step40_g6_g7_adjacent",
+      "step": 40,
+      "group_i": 6,
+      "group_j": 7,
+      "distance": "adjacent"
+    },
+    {
+      "pair_id": "step40_g0_g7_long",
+      "step": 40,
+      "group_i": 0,
+      "group_j": 7,
+      "distance": "long"
+    }
+  ]
+}

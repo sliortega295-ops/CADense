@@ -95,6 +95,11 @@ class CoFrameConfig:
     # K. Neither mode changes the generation trajectory.
     calibrated_budget_probe_mode: CalibratedBudgetProbeMode = "none"
 
+    # Counterfactual factorial screen for within-step trajectory interactions.
+    # The JSON plan is preregistered and probes are discarded; the deployed
+    # generation trajectory remains uniform K=9.
+    trajectory_interaction_plan: dict[str, Any] = field(default_factory=dict)
+
     trace_path: str | None = None
     strict_diffusers_version: bool = True
 
@@ -109,9 +114,27 @@ class CoFrameConfig:
             raise ValueError(
                 f"Unsupported calibrated_budget_probe_mode: {self.calibrated_budget_probe_mode}"
             )
+        budget_values = [int(value) for value in self.adaptive_k_values]
+        if self.trajectory_interaction_plan:
+            if self.calibrated_budget_probe_mode != "none":
+                raise ValueError("trajectory interaction screen cannot be combined with calibrated budget probes")
+            if self.method != "adaptive_k" or self.adaptive_k_policy != "step_block":
+                raise ValueError("trajectory interaction screen requires adaptive_k with step_block policy")
+            if tuple(budget_values) != (6, 9, 12, 21):
+                raise ValueError("trajectory interaction screen requires K in {6,9,12,21}")
+            if self.kv_mode != "full_kv" or self.interpolation_target != "delta":
+                raise ValueError("trajectory interaction screen requires full_kv delta interpolation")
+            if (self.sparse_block_start, self.sparse_block_end, self.block_group_size) != (3, 27, 3):
+                raise ValueError("trajectory interaction screen requires sparse blocks 3-26 in groups of 3")
+            if self.num_anchors != 9:
+                raise ValueError("trajectory interaction screen requires a uniform K=9 main trajectory")
+            if any(int(value) != 9 for value in self.adaptive_k_schedule.values()):
+                raise ValueError("trajectory interaction screen forbids non-K9 deployed schedule entries")
+            from .trajectory_interaction import validate_pair_plan
+
+            validate_pair_plan(self.trajectory_interaction_plan)
         if self.method == "adaptive_k" and self.adaptive_k_policy == "none":
             raise ValueError("method=adaptive_k requires an adaptive_k_policy")
-        budget_values = [int(value) for value in self.adaptive_k_values]
         if not budget_values or budget_values != sorted(set(budget_values)):
             raise ValueError("adaptive_k_values must be strictly increasing")
         if any(value < 1 for value in budget_values):
@@ -181,8 +204,8 @@ class CoFrameConfig:
         if self.oracle_metric_chunk_size < 1:
             raise ValueError("oracle_metric_chunk_size must be positive")
         if num_blocks is not None:
-            if self.calibrated_budget_probe_mode != "none" and num_blocks < 30:
-                raise ValueError("calibrated budget +3 propagation requires at least 30 blocks")
+            if (self.calibrated_budget_probe_mode != "none" or self.trajectory_interaction_plan) and num_blocks < 30:
+                raise ValueError("counterfactual +3 propagation requires at least 30 blocks")
             if not 0 <= self.sparse_block_start <= num_blocks:
                 raise ValueError("sparse_block_start is out of range")
             if not self.sparse_block_start <= self.sparse_block_end <= num_blocks:
@@ -210,4 +233,5 @@ class CoFrameConfig:
         result["adaptive_k_values"] = list(self.adaptive_k_values)
         result["adaptive_k_thresholds"] = list(self.adaptive_k_thresholds)
         result["adaptive_k_schedule"] = dict(self.adaptive_k_schedule)
+        result["trajectory_interaction_plan"] = dict(self.trajectory_interaction_plan)
         return result

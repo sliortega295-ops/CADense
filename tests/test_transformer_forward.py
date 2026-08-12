@@ -210,3 +210,107 @@ def test_calibrated_budget_surface_is_counterfactual_and_complete(monkeypatch):
         for entry in metadata.budget_group_probes
     ) < 1.0e-10
     assert torch.isfinite(output).all()
+
+
+def test_trajectory_interaction_probe_is_counterfactual_and_causal(monkeypatch):
+    monkeypatch.setattr(sparse_module, "require_diffusers_034", lambda strict=True: "0.34.0")
+    torch.manual_seed(29)
+    transformer = Transformer(num_blocks=30)
+    baseline_transformer = Transformer(num_blocks=30)
+    baseline_transformer.load_state_dict(transformer.state_dict())
+    hidden = torch.randn(1, 2, 21, 1, 1)
+    timestep = torch.tensor([500.0])
+    context = torch.randn(1, 3, 4)
+    plan = {
+        "schema_version": "coframe.trajectory-interaction-screen.v1",
+        "experiment_id": "trajectory-interaction-screen-20260812",
+        "base_trajectory_k": 9,
+        "arms": [
+            "k9_k9", "k6_k9", "k9_k12", "k6_k12",
+            "k12_k9", "k9_k6", "k12_k6",
+        ],
+        "pairs": [
+            {"pair_id": "step05_g0_g1_adjacent", "step": 5, "group_i": 0, "group_j": 1, "distance": "adjacent"},
+            {"pair_id": "step05_g0_g7_long", "step": 5, "group_i": 0, "group_j": 7, "distance": "long"},
+            {"pair_id": "step20_g3_g4_adjacent", "step": 20, "group_i": 3, "group_j": 4, "distance": "adjacent"},
+            {"pair_id": "step20_g0_g7_long", "step": 20, "group_i": 0, "group_j": 7, "distance": "long"},
+            {"pair_id": "step40_g6_g7_adjacent", "step": 40, "group_i": 6, "group_j": 7, "distance": "adjacent"},
+            {"pair_id": "step40_g0_g7_long", "step": 40, "group_i": 0, "group_j": 7, "distance": "long"},
+        ],
+    }
+    probed_config = CoFrameConfig(
+        method="adaptive_k",
+        adaptive_k_policy="step_block",
+        num_anchors=9,
+        sparse_block_start=3,
+        sparse_block_end=27,
+        block_group_size=3,
+        kv_mode="full_kv",
+        trajectory_interaction_plan=plan,
+    )
+    baseline_config = CoFrameConfig(
+        method="adaptive_k",
+        adaptive_k_policy="step_block",
+        num_anchors=9,
+        sparse_block_start=3,
+        sparse_block_end=27,
+        block_group_size=3,
+        kv_mode="full_kv",
+    )
+
+    def make_controller():
+        return AdaptiveMeshController(
+            num_frames=21,
+            num_anchors=9,
+            initial_anchors=[0, 2, 5, 8, 10, 12, 15, 18, 20],
+            prior_scores=torch.zeros(21),
+            prior_weight=0.0,
+        )
+
+    output, metadata = sparse_module.coframe_transformer_forward(
+        transformer,
+        hidden,
+        timestep,
+        context,
+        config=probed_config,
+        controller=make_controller(),
+        step_index=5,
+        update_controller=True,
+    )
+    baseline, baseline_metadata = sparse_module.coframe_transformer_forward(
+        baseline_transformer,
+        hidden,
+        timestep,
+        context,
+        config=baseline_config,
+        controller=make_controller(),
+        step_index=5,
+        update_controller=True,
+    )
+
+    assert torch.equal(output, baseline)
+    assert metadata.block_anchors == baseline_metadata.block_anchors
+    assert len(metadata.trajectory_interaction_probes) == 2
+    assert len({probe["entry_fingerprint"] for probe in metadata.trajectory_interaction_probes}) == 1
+    for probe in metadata.trajectory_interaction_probes:
+        assert probe["matched_prefix"] and probe["state_continuation"] and not probe["deployed"]
+        assert probe["executed_arms"] == plan["arms"]
+        assert set(probe["arms"]) == set(plan["arms"])
+        assert set(probe["factorials"]) == {"6_to_12", "12_to_6"}
+        assert "_transient_step_end_states" not in probe
+        for payload in probe["arms"].values():
+            assert set(payload["intermediate_group_budgets"]) <= {9}
+            assert set(payload["checkpoints"]) == {"after_j", "plus_3_dense", "step_end"}
+        for factorial in probe["factorials"].values():
+            assert set(factorial["checkpoints"]) == {"after_j", "plus_3_dense", "step_end"}
+            assert all(
+                factorial["checkpoints"][checkpoint][kind]["rho"] >= 0.0
+                for checkpoint in ("after_j", "plus_3_dense", "step_end")
+                for kind in ("scalar", "vector")
+            )
+    long_probe = next(probe for probe in metadata.trajectory_interaction_probes if probe["group_j"] == 7)
+    assert (
+        long_probe["arms"]["k6_k9"]["j_local"]["native_dense_delta_energy"]
+        != long_probe["arms"]["k9_k9"]["j_local"]["native_dense_delta_energy"]
+    )
+    assert torch.isfinite(output).all()

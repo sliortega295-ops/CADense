@@ -108,6 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--adaptive-k-thresholds", type=_csv_floats, default=())
     parser.add_argument("--adaptive-k-schedule-json", type=Path, default=None)
     parser.add_argument("--no-adaptive-k-carry", action="store_true")
+    parser.add_argument("--trajectory-interaction-plan-json", type=Path, default=None)
     parser.add_argument(
         "--calibrated-budget-probe-mode",
         choices=["none", "surface", "current"],
@@ -145,6 +146,12 @@ def main(argv: list[str] | None = None) -> int:
     latent_path = run_dir / "latents.pt"
     trace_path = run_dir / "trace.json"
     video_path = run_dir / "video.mp4"
+
+    trajectory_interaction_plan = {}
+    if args.trajectory_interaction_plan_json is not None:
+        trajectory_interaction_plan = json.loads(args.trajectory_interaction_plan_json.read_text(encoding="utf-8"))
+        if not isinstance(trajectory_interaction_plan, dict):
+            raise ValueError("trajectory-interaction plan JSON must contain an object")
 
     adaptive_k_schedule = {}
     if args.adaptive_k_schedule_json is not None:
@@ -188,6 +195,7 @@ def main(argv: list[str] | None = None) -> int:
         adaptive_k_schedule={str(key): int(value) for key, value in adaptive_k_schedule.items()},
         adaptive_k_carry_across_steps=not args.no_adaptive_k_carry,
         calibrated_budget_probe_mode=args.calibrated_budget_probe_mode,
+        trajectory_interaction_plan=trajectory_interaction_plan,
         trace_path=str(trace_path),
         strict_diffusers_version=not args.allow_unsupported_diffusers,
     )

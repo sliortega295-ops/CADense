@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import math
 import warnings
 from dataclasses import dataclass
@@ -59,6 +60,7 @@ class TransformerForwardMetadata:
     defects: list[dict[str, Any]]
     probes: list[dict[str, Any]]
     budget_group_probes: list[dict[str, Any]]
+    trajectory_interaction_probes: list[dict[str, Any]]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -69,6 +71,7 @@ class TransformerForwardMetadata:
             "defects": self.defects,
             "probes": self.probes,
             "budget_group_probes": self.budget_group_probes,
+            "trajectory_interaction_probes": self.trajectory_interaction_probes,
         }
 
 
@@ -530,6 +533,533 @@ def _calibrated_budget_group_probe(
     }
 
 
+_INTERACTION_ARM_BUDGETS: dict[str, tuple[int, int]] = {
+    "k9_k9": (9, 9),
+    "k6_k9": (6, 9),
+    "k9_k12": (9, 12),
+    "k6_k12": (6, 12),
+    "k12_k9": (12, 9),
+    "k9_k6": (9, 6),
+    "k12_k6": (12, 6),
+}
+_INTERACTION_FACTORIAL_ARMS: dict[str, tuple[str, str, str, str]] = {
+    "6_to_12": ("k9_k9", "k6_k9", "k9_k12", "k6_k12"),
+    "12_to_6": ("k9_k9", "k12_k9", "k9_k6", "k12_k6"),
+}
+_INTERACTION_CHECKPOINTS = ("after_j", "plus_3_dense", "step_end")
+
+
+def _sampled_tensor_fingerprint(values: torch.Tensor, *, sample_count: int = 64) -> str:
+    """Return a bounded deterministic audit fingerprint without copying a full state."""
+    flat = values.detach().reshape(-1)
+    count = min(max(1, int(sample_count)), int(flat.numel()))
+    if count == 1:
+        indices = torch.zeros(1, dtype=torch.long, device=flat.device)
+    else:
+        indices = torch.linspace(
+            0,
+            int(flat.numel()) - 1,
+            steps=count,
+            device=flat.device,
+            dtype=torch.float64,
+        ).round().long()
+    sample = flat.index_select(0, indices).float().cpu().tolist()
+    payload = "|".join(
+        [str(tuple(values.shape)), str(values.dtype), *(float(value).hex() for value in sample)]
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _interaction_tail_metrics(
+    *,
+    entry_state: torch.Tensor,
+    dense_state: torch.Tensor,
+    arm_state: torch.Tensor,
+    geometry: FrameGeometry,
+    chunk_size: int,
+) -> dict[str, Any]:
+    """Dense-referenced error normalized by the common dense tail-update energy."""
+    entry_frames = tokens_to_frames(
+        entry_state,
+        geometry.num_frames,
+        geometry.tokens_per_frame,
+    )
+    dense_frames = tokens_to_frames(
+        dense_state,
+        geometry.num_frames,
+        geometry.tokens_per_frame,
+    )
+    arm_frames = tokens_to_frames(
+        arm_state,
+        geometry.num_frames,
+        geometry.tokens_per_frame,
+    )
+    metrics = reconstruction_metrics(
+        dense_frames - entry_frames,
+        arm_frames - entry_frames,
+        chunk_size=chunk_size,
+    )
+    result = _compact_reconstruction_metrics(metrics)
+    if not all(
+        math.isfinite(float(result[key]))
+        for key in ("squared_error", "reference_energy", "normalized_mse", "relative_l2")
+    ):
+        raise RuntimeError("non-finite trajectory-interaction tail metric")
+    return result
+
+
+def _factorial_scalar_metrics(
+    values: dict[str, float],
+    arms: tuple[str, str, str, str],
+) -> dict[str, Any]:
+    arm_00, arm_10, arm_01, arm_11 = arms
+    y00 = float(values[arm_00])
+    y10 = float(values[arm_10])
+    y01 = float(values[arm_01])
+    y11 = float(values[arm_11])
+    delta_i = y10 - y00
+    delta_j = y01 - y00
+    delta_joint = y11 - y00
+    additive_prediction = delta_i + delta_j
+    interaction = delta_joint - additive_prediction
+    tau = max(1.0e-12, 0.01 * abs(y00))
+    denominator = abs(delta_i) + abs(delta_j) + tau
+    rho = abs(interaction) / denominator
+    sign_flip = (
+        additive_prediction * delta_joint < 0.0
+        and abs(additive_prediction) > tau
+        and abs(delta_joint) > tau
+    )
+    result: dict[str, Any] = {
+        "y00": y00,
+        "y10": y10,
+        "y01": y01,
+        "y11": y11,
+        "delta_i": delta_i,
+        "delta_j": delta_j,
+        "delta_joint": delta_joint,
+        "additive_prediction": additive_prediction,
+        "interaction": interaction,
+        "tau": tau,
+        "normalization_denominator": denominator,
+        "rho": rho,
+        "meaningful_sign_flip": bool(sign_flip),
+    }
+    if not all(math.isfinite(float(value)) for value in result.values() if not isinstance(value, bool)):
+        raise RuntimeError("non-finite trajectory-interaction scalar factorial")
+    return result
+
+
+def _factorial_vector_metrics(
+    h00: torch.Tensor,
+    h10: torch.Tensor,
+    h01: torch.Tensor,
+    h11: torch.Tensor,
+    *,
+    chunk_size: int,
+) -> dict[str, float]:
+    """Measure interaction directly in state space with bounded FP64 temporaries."""
+    if not (h00.shape == h10.shape == h01.shape == h11.shape):
+        raise ValueError("factorial states must have identical shapes")
+    flat = [value.detach().reshape(-1) for value in (h00, h10, h01, h11)]
+    accum = torch.zeros(7, device=h00.device, dtype=torch.float64)
+    bounded_chunk = max(1, int(chunk_size))
+    for start in range(0, int(flat[0].numel()), bounded_chunk):
+        end = min(int(flat[0].numel()), start + bounded_chunk)
+        v00, v10, v01, v11 = [value[start:end].double() for value in flat]
+        main_i = v10 - v00
+        main_j = v01 - v00
+        joint = v11 - v00
+        residual = v11 - v10 - v01 + v00
+        accum += torch.stack(
+            (
+                main_i.square().sum(),
+                main_j.square().sum(),
+                joint.square().sum(),
+                residual.square().sum(),
+                (main_i * main_j).sum(),
+                (residual * joint).sum(),
+                torch.tensor(float(end - start), device=h00.device, dtype=torch.float64),
+            )
+        )
+    main_i_sq, main_j_sq, joint_sq, residual_sq, main_dot, residual_joint_dot, elements = (
+        float(value) for value in accum.cpu().tolist()
+    )
+    main_i_norm = math.sqrt(max(0.0, main_i_sq))
+    main_j_norm = math.sqrt(max(0.0, main_j_sq))
+    joint_norm = math.sqrt(max(0.0, joint_sq))
+    residual_norm = math.sqrt(max(0.0, residual_sq))
+    denominator = main_i_norm + main_j_norm + 1.0e-12
+    result = {
+        "main_i_norm": main_i_norm,
+        "main_j_norm": main_j_norm,
+        "joint_norm": joint_norm,
+        "residual_norm": residual_norm,
+        "rho": residual_norm / denominator,
+        "residual_over_joint": residual_norm / (joint_norm + 1.0e-12),
+        "main_effect_cosine": main_dot / (main_i_norm * main_j_norm + 1.0e-12),
+        "residual_joint_cosine": residual_joint_dot / (residual_norm * joint_norm + 1.0e-12),
+        "elements": elements,
+    }
+    if not all(math.isfinite(float(value)) for value in result.values()):
+        raise RuntimeError("non-finite trajectory-interaction vector factorial")
+    return result
+
+
+def _run_dense_block_range(
+    state: torch.Tensor,
+    *,
+    blocks: Any,
+    block_start: int,
+    block_end: int,
+    encoder_hidden_states: torch.Tensor,
+    timestep_projection: torch.Tensor,
+    rotary_emb: torch.Tensor,
+) -> torch.Tensor:
+    for block_index in range(int(block_start), int(block_end) + 1):
+        state = blocks[block_index](
+            state,
+            encoder_hidden_states,
+            timestep_projection,
+            rotary_emb,
+        )
+    return state
+
+
+def _trajectory_interaction_probe(
+    *,
+    pair: dict[str, Any],
+    group_input: torch.Tensor,
+    blocks: Any,
+    encoder_hidden_states: torch.Tensor,
+    timestep_projection: torch.Tensor,
+    rotary_emb: torch.Tensor,
+    geometry: FrameGeometry,
+    config: CoFrameConfig,
+    projection: torch.Tensor | None,
+) -> dict[str, Any]:
+    """Run the frozen seven-arm within-step factorial screen counterfactually."""
+    step_index = int(pair["step"])
+    group_i = int(pair["group_i"])
+    group_j = int(pair["group_j"])
+    block_i_start = config.sparse_block_start + group_i * config.block_group_size
+    block_i_end = block_i_start + config.block_group_size - 1
+    block_j_start = config.sparse_block_start + group_j * config.block_group_size
+    block_j_end = block_j_start + config.block_group_size - 1
+    plus_3_end = block_j_end + 3
+    step_end_block = len(blocks) - 1
+    if not (0 <= group_i < group_j < 8):
+        raise ValueError("trajectory-interaction pair requires 0 <= group_i < group_j < 8")
+    if plus_3_end > step_end_block:
+        raise ValueError("trajectory-interaction pair lacks three dense tail blocks")
+
+    dense_state = group_input
+    dense_checkpoints: dict[str, torch.Tensor] = {}
+    for block_index in range(block_i_start, step_end_block + 1):
+        dense_state = blocks[block_index](
+            dense_state,
+            encoder_hidden_states,
+            timestep_projection,
+            rotary_emb,
+        )
+        if block_index == block_j_end:
+            dense_checkpoints["after_j"] = dense_state
+        if block_index == plus_3_end:
+            dense_checkpoints["plus_3_dense"] = dense_state
+        if block_index == step_end_block:
+            dense_checkpoints["step_end"] = dense_state
+    if set(dense_checkpoints) != set(_INTERACTION_CHECKPOINTS):
+        raise RuntimeError("failed to materialize all dense interaction checkpoints")
+
+    checkpoint_states: dict[str, dict[str, torch.Tensor]] = {
+        checkpoint: {} for checkpoint in _INTERACTION_CHECKPOINTS
+    }
+    arm_payloads: dict[str, Any] = {}
+    j_local_raw: dict[str, tuple[float, float]] = {}
+    executed_arms: list[str] = []
+    for arm_name in config.trajectory_interaction_plan["arms"]:
+        k_i, k_j = _INTERACTION_ARM_BUDGETS[str(arm_name)]
+        arm_state = group_input
+        intermediate_budgets: list[int] = []
+        local_dense_j: torch.Tensor | None = None
+        local_j_input: torch.Tensor | None = None
+        for group_index in range(group_i, group_j + 1):
+            group_start = config.sparse_block_start + group_index * config.block_group_size
+            group_end = group_start + config.block_group_size - 1
+            if group_index == group_i:
+                budget = k_i
+            elif group_index == group_j:
+                budget = k_j
+                local_j_input = arm_state
+                local_dense_j = _run_dense_block_range(
+                    arm_state,
+                    blocks=blocks,
+                    block_start=group_start,
+                    block_end=group_end,
+                    encoder_hidden_states=encoder_hidden_states,
+                    timestep_projection=timestep_projection,
+                    rotary_emb=rotary_emb,
+                )
+            else:
+                budget = 9
+                intermediate_budgets.append(9)
+            anchors = uniform_select(
+                geometry.num_frames,
+                int(budget),
+                config.force_boundaries,
+            )
+            for block_index in range(group_start, group_end + 1):
+                arm_state, _ = _sparse_block_forward(
+                    blocks[block_index],
+                    arm_state,
+                    encoder_hidden_states,
+                    timestep_projection,
+                    rotary_emb,
+                    anchors=anchors,
+                    geometry=geometry,
+                    config=config,
+                    compute_defects=False,
+                    projection=projection,
+                    interpolation_target=config.interpolation_target,
+                )
+        if local_j_input is None or local_dense_j is None:
+            raise RuntimeError("failed to capture the branch-native group-j input")
+        local_input_frames = tokens_to_frames(
+            local_j_input,
+            geometry.num_frames,
+            geometry.tokens_per_frame,
+        )
+        local_dense_frames = tokens_to_frames(
+            local_dense_j,
+            geometry.num_frames,
+            geometry.tokens_per_frame,
+        )
+        local_sparse_frames = tokens_to_frames(
+            arm_state,
+            geometry.num_frames,
+            geometry.tokens_per_frame,
+        )
+        local_metrics = reconstruction_metrics(
+            local_dense_frames - local_input_frames,
+            local_sparse_frames - local_input_frames,
+            chunk_size=config.oracle_metric_chunk_size,
+        )
+        j_local_raw[str(arm_name)] = (
+            float(local_metrics["squared_error"]),
+            float(local_metrics["reference_energy"]),
+        )
+
+        checkpoints = {"after_j": arm_state}
+        arm_state = _run_dense_block_range(
+            arm_state,
+            blocks=blocks,
+            block_start=block_j_end + 1,
+            block_end=plus_3_end,
+            encoder_hidden_states=encoder_hidden_states,
+            timestep_projection=timestep_projection,
+            rotary_emb=rotary_emb,
+        )
+        checkpoints["plus_3_dense"] = arm_state
+        if plus_3_end < step_end_block:
+            arm_state = _run_dense_block_range(
+                arm_state,
+                blocks=blocks,
+                block_start=plus_3_end + 1,
+                block_end=step_end_block,
+                encoder_hidden_states=encoder_hidden_states,
+                timestep_projection=timestep_projection,
+                rotary_emb=rotary_emb,
+            )
+        checkpoints["step_end"] = arm_state
+
+        checkpoint_metrics: dict[str, Any] = {}
+        for checkpoint in _INTERACTION_CHECKPOINTS:
+            checkpoint_states[checkpoint][str(arm_name)] = checkpoints[checkpoint]
+            checkpoint_metrics[checkpoint] = _interaction_tail_metrics(
+                entry_state=group_input,
+                dense_state=dense_checkpoints[checkpoint],
+                arm_state=checkpoints[checkpoint],
+                geometry=geometry,
+                chunk_size=config.oracle_metric_chunk_size,
+            )
+        arm_payloads[str(arm_name)] = {
+            "k_i": int(k_i),
+            "k_j": int(k_j),
+            "pair_budget": int(k_i + k_j),
+            "intermediate_group_budgets": intermediate_budgets,
+            "checkpoints": checkpoint_metrics,
+        }
+        executed_arms.append(str(arm_name))
+
+    baseline_j_energy = float(j_local_raw["k9_k9"][1])
+    for arm_name, (squared_error, native_energy) in j_local_raw.items():
+        arm_payloads[arm_name]["j_local"] = {
+            "squared_error": squared_error,
+            "native_dense_delta_energy": native_energy,
+            "native_normalized_mse": squared_error / (native_energy + 1.0e-12),
+            "common_k9_input_normalized_mse": squared_error / (baseline_j_energy + 1.0e-12),
+        }
+
+    factorials: dict[str, Any] = {}
+    vector_chunk_size = max(int(config.oracle_metric_chunk_size), 1_048_576)
+    for orientation, arms in _INTERACTION_FACTORIAL_ARMS.items():
+        orientation_payload: dict[str, Any] = {
+            "arms": {name: arm for name, arm in zip(("00", "10", "01", "11"), arms)},
+            "checkpoints": {},
+        }
+        for checkpoint in _INTERACTION_CHECKPOINTS:
+            scalar_values = {
+                arm: float(arm_payloads[arm]["checkpoints"][checkpoint]["normalized_mse"])
+                for arm in arms
+            }
+            h00, h10, h01, h11 = (checkpoint_states[checkpoint][arm] for arm in arms)
+            orientation_payload["checkpoints"][checkpoint] = {
+                "scalar": _factorial_scalar_metrics(scalar_values, arms),
+                "vector": _factorial_vector_metrics(
+                    h00,
+                    h10,
+                    h01,
+                    h11,
+                    chunk_size=vector_chunk_size,
+                ),
+            }
+        local_values = {
+            arm: float(arm_payloads[arm]["j_local"]["common_k9_input_normalized_mse"])
+            for arm in arms
+        }
+        orientation_payload["j_local_common_normalized_scalar"] = _factorial_scalar_metrics(
+            local_values,
+            arms,
+        )
+        factorials[orientation] = orientation_payload
+
+    entry_fingerprint = _sampled_tensor_fingerprint(group_input)
+    dense_fingerprints = {
+        checkpoint: _sampled_tensor_fingerprint(state)
+        for checkpoint, state in dense_checkpoints.items()
+    }
+    return {
+        "pair_id": str(pair["pair_id"]),
+        "step": step_index,
+        "group_i": group_i,
+        "group_j": group_j,
+        "distance": str(pair["distance"]),
+        "blocks": {
+            "group_i": [block_i_start, block_i_end],
+            "group_j": [block_j_start, block_j_end],
+            "plus_3_end": plus_3_end,
+            "step_end": step_end_block,
+        },
+        "base_trajectory_k": 9,
+        "entry_fingerprint": entry_fingerprint,
+        "dense_reference_fingerprints": dense_fingerprints,
+        "matched_prefix": True,
+        "state_continuation": True,
+        "deployed": False,
+        "conditional_branch_only": True,
+        "executed_arms": executed_arms,
+        "arms": arm_payloads,
+        "factorials": factorials,
+        "oracle_metric_chunk_size": int(config.oracle_metric_chunk_size),
+        "_transient_step_end_states": {
+            "dense": dense_checkpoints["step_end"],
+            "arms": {
+                arm_name: checkpoint_states["step_end"][arm_name]
+                for arm_name in executed_arms
+            },
+        },
+    }
+
+
+def _finalize_interaction_step_output(
+    transformer: Any,
+    state: torch.Tensor,
+    *,
+    temb: torch.Tensor,
+    geometry: FrameGeometry,
+) -> torch.Tensor:
+    """Apply Wan's common output head to a branch-local end-of-block state."""
+    shift, scale = (transformer.scale_shift_table + temb.unsqueeze(1)).chunk(2, dim=1)
+    shift = shift.to(state.device)
+    scale = scale.to(state.device)
+    state = (transformer.norm_out(state.float()) * (1 + scale) + shift).type_as(state)
+    state = transformer.proj_out(state)
+    batch_size = int(state.shape[0])
+    p_t, p_h, p_w = transformer.config.patch_size
+    out_channels = transformer.config.out_channels or transformer.config.in_channels
+    state = state.reshape(
+        batch_size,
+        geometry.num_frames,
+        geometry.height,
+        geometry.width,
+        p_t,
+        p_h,
+        p_w,
+        out_channels,
+    )
+    state = state.permute(0, 7, 1, 4, 2, 5, 3, 6)
+    return state.flatten(6, 7).flatten(4, 5).flatten(2, 3)
+
+
+def _attach_interaction_step_output_metrics(
+    transformer: Any,
+    probes: list[dict[str, Any]],
+    *,
+    temb: torch.Tensor,
+    geometry: FrameGeometry,
+) -> None:
+    """Replace pre-head step_end diagnostics with conditional prediction output diagnostics.
+
+    The helper consumes transient tensors kept only during the current forward;
+    they are removed before metadata is serialized.
+    """
+    for probe in probes:
+        transient = probe.pop("_transient_step_end_states")
+        dense_output = _finalize_interaction_step_output(
+            transformer,
+            transient["dense"],
+            temb=temb,
+            geometry=geometry,
+        )
+        dense_energy = float(dense_output.float().square().sum().item())
+        probe["dense_reference_fingerprints"]["step_end"] = _sampled_tensor_fingerprint(
+            dense_output
+        )
+        arm_outputs: dict[str, torch.Tensor] = {}
+        for arm_name, state in transient["arms"].items():
+            output = _finalize_interaction_step_output(
+                transformer,
+                state,
+                temb=temb,
+                geometry=geometry,
+            )
+            arm_outputs[arm_name] = output
+            error = float((output.float() - dense_output.float()).square().sum().item())
+            probe["arms"][arm_name]["checkpoints"]["step_end"] = {
+                "squared_error": error,
+                "reference_energy": dense_energy,
+                "normalized_mse": error / (dense_energy + 1.0e-12),
+                "relative_l2": math.sqrt(max(0.0, error / (dense_energy + 1.0e-12))),
+            }
+        for orientation, arms in _INTERACTION_FACTORIAL_ARMS.items():
+            scalar_values = {
+                arm: float(probe["arms"][arm]["checkpoints"]["step_end"]["normalized_mse"])
+                for arm in arms
+            }
+            h00, h10, h01, h11 = (arm_outputs[arm] for arm in arms)
+            probe["factorials"][orientation]["checkpoints"]["step_end"] = {
+                "scalar": _factorial_scalar_metrics(scalar_values, arms),
+                "vector": _factorial_vector_metrics(
+                    h00,
+                    h10,
+                    h01,
+                    h11,
+                    chunk_size=max(1_048_576, int(probe["oracle_metric_chunk_size"])),
+                ),
+            }
+        probe.pop("oracle_metric_chunk_size")
+
+
 def _probe_entry(
     *,
     step_index: int,
@@ -985,6 +1515,7 @@ def coframe_transformer_forward(
         defects=[],
         probes=[],
         budget_group_probes=[],
+        trajectory_interaction_probes=[],
     )
     group_defects: dict[int, list[float]] = {}
     sparse_group_index = 0
@@ -1042,6 +1573,31 @@ def coframe_transformer_forward(
         metadata.block_anchors[block_index] = anchors
 
         block_input = hidden_states
+        if (
+            replay_block_anchors is None
+            and is_group_start
+            and config.trajectory_interaction_plan
+        ):
+            matching_pairs = [
+                pair
+                for pair in config.trajectory_interaction_plan["pairs"]
+                if int(pair["step"]) == int(step_index)
+                and int(pair["group_i"]) == int(adaptive_group_index)
+            ]
+            for pair in matching_pairs:
+                metadata.trajectory_interaction_probes.append(
+                    _trajectory_interaction_probe(
+                        pair=pair,
+                        group_input=block_input,
+                        blocks=transformer.blocks,
+                        encoder_hidden_states=encoder_hidden_states,
+                        timestep_projection=timestep_proj,
+                        rotary_emb=rotary_emb,
+                        geometry=geometry,
+                        config=config,
+                        projection=projection,
+                    )
+                )
         if (
             replay_block_anchors is None
             and is_group_start
@@ -1235,6 +1791,14 @@ def coframe_transformer_forward(
     )
     hidden_states = hidden_states.permute(0, 7, 1, 4, 2, 5, 3, 6)
     output = hidden_states.flatten(6, 7).flatten(4, 5).flatten(2, 3)
+
+    if metadata.trajectory_interaction_probes:
+        _attach_interaction_step_output_metrics(
+            transformer,
+            metadata.trajectory_interaction_probes,
+            temb=temb,
+            geometry=geometry,
+        )
 
     if trace is not None:
         trace.add("transformer_forward", **metadata.to_dict())
