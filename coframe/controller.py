@@ -89,6 +89,10 @@ class AdaptiveMeshController:
         self.dynamic_risk = torch.zeros(num_frames, dtype=torch.float32)
         self.observation_count = torch.zeros(num_frames, dtype=torch.float32)
         self.refresh_history: list[MeshRefresh] = []
+        # Stage-1d budget state is intentionally separate from self.anchors,
+        # whose fixed length still serves the original remeshing controller.
+        self.current_budget = int(num_anchors)
+        self.budget_history: list[dict[str, Any]] = []
 
     @property
     def risk(self) -> torch.Tensor:
@@ -277,4 +281,6 @@ class AdaptiveMeshController:
             "risk": self.risk.tolist(),
             "observation_count": self.observation_count.tolist(),
             "refresh_history": [event.to_dict() for event in self.refresh_history],
+            "current_budget": self.current_budget,
+            "budget_history": list(self.budget_history),
         }

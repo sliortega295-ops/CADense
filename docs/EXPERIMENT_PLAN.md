@@ -170,3 +170,37 @@ python scripts/summarize_stage1c_curvature.py \
 ```
 
 A curvature signal is worth implementing as a real controller only if it beats gap-only on actionable-cell gain recovery / regret and also beats its own shuffled control. A high same-action rate with shuffled curvature rejects the localization mechanism just as in Stage-1b.
+
+
+## Stage-1d — causal adaptive exact-frame budget
+
+Stage-1c suggests defect magnitude may be useful as a scalar block-risk signal even though defect localization was rejected. Stage-1d therefore tests **how much exact computation** to allocate, not where to place defect-driven anchors.
+
+First run the zero-GPU lag test on the preserved Stage-1b `full_kv` traces:
+
+```bash
+python scripts/analyze_stage1d_lagged.py \
+  --root <STAGE1B_ROOT> \
+  --output outputs/stage1d/lagged_analysis.json \
+  --plan-output outputs/stage1d/budget_plan.json
+```
+
+The causal contract is previous completed block-group defect -> next block-group budget. Only `RUN_ADAPTIVE_K_SCREEN` permits GPU execution. LOPO folds calibrate thresholds from the other seven prompts. The default budgets are `{6,9,12,21}` with calibration quantiles `{0.35,0.80,0.95}`, whose intended mean exact-frame count is approximately 9 under `full_kv`.
+
+For each held-out prompt run dense, static K=9, step/block-only schedule, previous-group mean-defect adaptive K, and max-defect ablation:
+
+```bash
+bash scripts/run_stage1d_adaptive_k_wan21.sh \
+  "<prompt>" outputs/stage1d_gpu/p0_s0 0 \
+  outputs/stage1d/budget_plan.json p0_s0
+```
+
+Then aggregate:
+
+```bash
+python scripts/summarize_stage1d.py \
+  --root outputs/stage1d_gpu \
+  --output outputs/stage1d_gpu/summary.json
+```
+
+Primary support requires mean-defect adaptation to remain within 5% of the K=9 exact-frame budget, beat static K=9 and the prompt-independent step/block schedule on realized operator NMSE, retain the sign after +3 dense propagation and at the dense-referenced endpoint, and survive the max-defect ablation. Latency is not a primary claim unless GPUs are exclusive. This Stage uses `full_kv` to keep mechanism comparisons close to linear in query-frame count; `anchor_only` speed validation follows only after the mechanism gate passes.

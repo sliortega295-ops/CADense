@@ -168,13 +168,12 @@ def extract_records(runs: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], d
                         "mean_defect": mean(source),
                         "max_defect": max(source),
                     })
-            if groups.get(max_group):
-                previous_step_last = groups[max_group]
+            incoming_previous_step_last = previous_step_last
 
             for probe in event.get("probes", []):
                 block = int(probe["block"])
                 group = (block - start) // group_size
-                source = groups.get(group - 1) if group > 0 else previous_step_last
+                source = groups.get(group - 1) if group > 0 else incoming_previous_step_last
                 if not source:
                     continue
                 probe_records.append({
@@ -188,6 +187,8 @@ def extract_records(runs: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], d
                     "operator_nmse": probe.get("block_delta_normalized_mse"),
                     "propagation_h3": probe.get("propagated_relative_l2_h3"),
                 })
+            if groups.get(max_group):
+                previous_step_last = groups[max_group]
     return probe_records, causal_observations
 
 
@@ -208,14 +209,16 @@ def build_fold_plans(
             assigned = [select_budget(value, thresholds, budgets) for value in values]
             fold[f"{stat}_thresholds"] = thresholds
             fold[f"{stat}_calibration_avg_k"] = mean(assigned) if assigned else None
-        thresholds = fold["mean_defect_thresholds"]
         by_key: dict[str, list[float]] = defaultdict(list)
         for item in train:
             by_key[str(item["key"])].append(float(item["mean_defect"]))
+        key_means = {key: mean(values) for key, values in sorted(by_key.items())}
+        schedule_thresholds = [quantile(list(key_means.values()), q) for q in quantiles]
         schedule = {
-            key: select_budget(mean(values), thresholds, budgets)
-            for key, values in sorted(by_key.items())
+            key: select_budget(value, schedule_thresholds, budgets)
+            for key, value in key_means.items()
         }
+        fold["step_block_thresholds"] = schedule_thresholds
         fold["step_block_schedule"] = schedule
         fold["step_block_calibration_avg_k"] = mean(schedule.values()) if schedule else None
         fold["train_prompt_ids"] = [prompt for prompt in prompts if prompt != heldout]

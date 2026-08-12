@@ -9,6 +9,7 @@ import torch
 import torch.nn.functional as F
 from packaging.version import Version
 
+from ..budget import defect_stat, lookup_scheduled_budget, select_budget
 from ..config import CoFrameConfig
 from ..controller import AdaptiveMeshController
 from ..interpolation import (
@@ -54,6 +55,7 @@ class TransformerForwardMetadata:
     step_index: int
     block_anchors: dict[int, list[int]]
     refresh_events: list[dict[str, Any]]
+    budget_events: list[dict[str, Any]]
     defects: list[dict[str, Any]]
     probes: list[dict[str, Any]]
 
@@ -62,6 +64,7 @@ class TransformerForwardMetadata:
             "step_index": self.step_index,
             "block_anchors": {str(key): value for key, value in self.block_anchors.items()},
             "refresh_events": self.refresh_events,
+            "budget_events": self.budget_events,
             "defects": self.defects,
             "probes": self.probes,
         }
@@ -460,15 +463,20 @@ def _probe_entry(
     gram = frame_gram_matrix(mesh_target, chunk_size=config.oracle_metric_chunk_size)
     interval_costs = interpolation_interval_costs(gram)
     total_energy = float(torch.diagonal(gram).sum().item())
+    probe_budget = len(anchors) if config.method == "adaptive_k" else config.num_anchors
     fixed_anchors = uniform_select(
         geometry.num_frames,
-        config.num_anchors,
+        probe_budget,
         config.force_boundaries,
     )
-    rhyme_anchors = list(getattr(controller, "rhyme_reference_anchors", controller.initial_anchors))
+    rhyme_anchors = (
+        list(fixed_anchors)
+        if config.method == "adaptive_k"
+        else list(getattr(controller, "rhyme_reference_anchors", controller.initial_anchors))
+    )
     fis_anchors = fis_interleaved_select(
         geometry.num_frames,
-        config.num_anchors,
+        probe_budget,
         block_index,
         config.sparse_block_start,
         force_boundaries=config.force_boundaries,
@@ -476,7 +484,7 @@ def _probe_entry(
     )
     oracle = optimal_piecewise_linear_mesh(
         interval_costs,
-        num_anchors=config.num_anchors,
+        num_anchors=probe_budget,
         total_energy=total_energy,
         min_gap=config.min_anchor_gap,
         force_boundaries=config.force_boundaries,
@@ -676,6 +684,7 @@ def _probe_entry(
         "step": step_index,
         "block": block_index,
         "anchors": list(anchors),
+        "anchor_budget": probe_budget,
         "actual_frame_error": delta_frame_error.tolist(),
         "actual_delta_frame_error": delta_frame_error.tolist(),
         "actual_output_frame_error": realized_output["per_frame_global_normalized_rms"],
@@ -831,22 +840,52 @@ def coframe_transformer_forward(
         step_index=step_index,
         block_anchors={},
         refresh_events=[],
+        budget_events=[],
         defects=[],
         probes=[],
     )
     group_defects: dict[int, list[float]] = {}
     sparse_group_index = 0
     previous_delta_curvature: torch.Tensor | None = None
+    if config.method == "adaptive_k" and not config.adaptive_k_carry_across_steps:
+        controller.current_budget = int(config.num_anchors)
 
     for block_index, block in enumerate(transformer.blocks):
         if not config.is_sparse_block(block_index):
             hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
             continue
 
+        relative_zero = block_index - config.sparse_block_start
+        adaptive_group_index = relative_zero // config.block_group_size
+        is_group_start = relative_zero % config.block_group_size == 0
         if replay_block_anchors is not None:
             if block_index not in replay_block_anchors:
                 raise KeyError(f"Missing replay anchors for sparse block {block_index}")
             anchors = list(replay_block_anchors[block_index])
+        elif config.method == "adaptive_k":
+            if is_group_start and config.adaptive_k_policy == "step_block":
+                controller.current_budget = lookup_scheduled_budget(
+                    config.adaptive_k_schedule,
+                    step_index=step_index,
+                    group_index=adaptive_group_index,
+                    fallback=config.num_anchors,
+                )
+            anchors = uniform_select(
+                geometry.num_frames,
+                int(controller.current_budget),
+                config.force_boundaries,
+            )
+            if is_group_start:
+                assignment = {
+                    "step": step_index,
+                    "group": adaptive_group_index,
+                    "after_block": block_index - 1,
+                    "policy": config.adaptive_k_policy,
+                    "assigned_k": int(controller.current_budget),
+                    "source": "step_block_schedule" if config.adaptive_k_policy == "step_block" else "previous_group",
+                }
+                metadata.budget_events.append(assignment)
+                controller.budget_history.append(dict(assignment))
         elif config.method == "fis":
             anchors = fis_interleaved_select(
                 geometry.num_frames,
@@ -867,11 +906,16 @@ def coframe_transformer_forward(
             dense_output = block(block_input, encoder_hidden_states, timestep_proj, rotary_emb)
 
         compute_defects = (
-            config.method == "coframe"
-            and replay_block_anchors is None
+            replay_block_anchors is None
             and (
-                (update_controller and config.refresh_signal in {"defect", "shuffled"})
-                or dense_output is not None
+                (
+                    config.method == "coframe"
+                    and ((update_controller and config.refresh_signal in {"defect", "shuffled"}) or dense_output is not None)
+                )
+                or (
+                    config.method == "adaptive_k"
+                    and ((update_controller and config.adaptive_k_policy in {"mean_defect", "max_defect"}) or dense_output is not None)
+                )
             )
         )
         hidden_states, defects = _sparse_block_forward(
@@ -977,6 +1021,29 @@ def coframe_transformer_forward(
                         metadata.refresh_events.append(entry)
                         if trace is not None:
                             trace.add("mesh_refresh", **entry)
+            if config.method == "adaptive_k" and update_controller and config.adaptive_k_policy in {"mean_defect", "max_defect"}:
+                samples = [value for values in group_defects.values() for value in values]
+                statistic = "mean" if config.adaptive_k_policy == "mean_defect" else "max"
+                risk_value = defect_stat(samples, statistic)
+                if risk_value is not None:
+                    before_k = int(controller.current_budget)
+                    next_k = select_budget(risk_value, config.adaptive_k_thresholds, config.adaptive_k_values)
+                    controller.current_budget = int(next_k)
+                    update = {
+                        "step": step_index,
+                        "source_group": adaptive_group_index,
+                        "after_block": block_index,
+                        "policy": config.adaptive_k_policy,
+                        "risk_statistic": statistic,
+                        "risk_value": float(risk_value),
+                        "before_k": before_k,
+                        "next_k": int(next_k),
+                        "causal": True,
+                    }
+                    metadata.budget_events.append(update)
+                    controller.budget_history.append(dict(update))
+                    if trace is not None:
+                        trace.add("budget_update", **update)
             group_defects = {}
 
     shift, scale = (transformer.scale_shift_table + temb.unsqueeze(1)).chunk(2, dim=1)

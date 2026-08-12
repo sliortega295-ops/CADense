@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, Sequence
 
-Method = Literal["dense", "fixed", "fis", "rhyme", "coframe"]
+Method = Literal["dense", "fixed", "fis", "rhyme", "coframe", "adaptive_k"]
 RefreshSignal = Literal["defect", "none", "gap_only", "shuffled"]
+BudgetPolicy = Literal["none", "step_block", "mean_defect", "max_defect"]
 KVMode = Literal["anchor_only", "full_kv"]
 InterpolationTarget = Literal["delta", "state"]
 DefectTarget = Literal["delta", "state"]
@@ -78,14 +79,41 @@ class CoFrameConfig:
     probe_curvature_signals: bool = False
     curvature_shuffle_seed: int = 20260811
 
+    # Stage-1d: causal exact-frame budget allocation. Frame placement is
+    # deliberately uniform so this experiment isolates "how much to compute"
+    # from the rejected defect-localization/remeshing mechanism.
+    adaptive_k_policy: BudgetPolicy = "none"
+    adaptive_k_values: Sequence[int] = field(default_factory=lambda: (6, 9, 12, 21))
+    adaptive_k_thresholds: Sequence[float] = field(default_factory=tuple)
+    adaptive_k_schedule: dict[str, int] = field(default_factory=dict)
+    adaptive_k_carry_across_steps: bool = True
+
     trace_path: str | None = None
     strict_diffusers_version: bool = True
 
     def validate(self, *, num_blocks: int | None = None, num_frames: int | None = None) -> None:
-        if self.method not in {"dense", "fixed", "fis", "rhyme", "coframe"}:
+        if self.method not in {"dense", "fixed", "fis", "rhyme", "coframe", "adaptive_k"}:
             raise ValueError(f"Unsupported method: {self.method}")
         if self.refresh_signal not in {"defect", "none", "gap_only", "shuffled"}:
             raise ValueError(f"Unsupported refresh_signal: {self.refresh_signal}")
+        if self.adaptive_k_policy not in {"none", "step_block", "mean_defect", "max_defect"}:
+            raise ValueError(f"Unsupported adaptive_k_policy: {self.adaptive_k_policy}")
+        if self.method == "adaptive_k" and self.adaptive_k_policy == "none":
+            raise ValueError("method=adaptive_k requires an adaptive_k_policy")
+        budget_values = [int(value) for value in self.adaptive_k_values]
+        if not budget_values or budget_values != sorted(set(budget_values)):
+            raise ValueError("adaptive_k_values must be strictly increasing")
+        if any(value < 1 for value in budget_values):
+            raise ValueError("adaptive_k_values must be positive")
+        thresholds = [float(value) for value in self.adaptive_k_thresholds]
+        if thresholds != sorted(thresholds):
+            raise ValueError("adaptive_k_thresholds must be sorted")
+        if self.adaptive_k_policy in {"mean_defect", "max_defect"} and len(thresholds) != len(budget_values) - 1:
+            raise ValueError("adaptive defect policies require len(values)-1 thresholds")
+        if self.adaptive_k_policy == "step_block":
+            invalid_schedule = [value for value in self.adaptive_k_schedule.values() if int(value) not in budget_values]
+            if invalid_schedule:
+                raise ValueError("adaptive_k_schedule contains a budget outside adaptive_k_values")
         if self.fis_anchor_stride < 0:
             raise ValueError("fis_anchor_stride must be >= 0")
         if self.fis_dense_tail_steps < 0:
@@ -99,6 +127,17 @@ class CoFrameConfig:
             raise ValueError("At least two anchors are required when force_boundaries=True")
         if num_frames is not None and self.num_anchors > num_frames:
             raise ValueError(f"num_anchors={self.num_anchors} exceeds latent frames={num_frames}")
+        if self.method == "adaptive_k" and num_frames is not None and any(
+            int(value) > num_frames for value in self.adaptive_k_values
+        ):
+            raise ValueError("adaptive_k_values exceed the latent frame count")
+        if (
+            self.method == "adaptive_k"
+            and self.force_boundaries
+            and any(int(value) < 2 for value in self.adaptive_k_values)
+            and (num_frames is None or num_frames > 1)
+        ):
+            raise ValueError("adaptive_k_values must be >=2 when force_boundaries=True")
         if self.min_anchor_gap < 1:
             raise ValueError("min_anchor_gap must be >= 1")
         if self.block_group_size < 1:
@@ -142,4 +181,7 @@ class CoFrameConfig:
         result["oracle_probe_blocks"] = list(self.oracle_probe_blocks)
         result["oracle_probe_horizons"] = list(self.oracle_probe_horizons)
         result["probe_counterfactual_methods"] = list(self.probe_counterfactual_methods)
+        result["adaptive_k_values"] = list(self.adaptive_k_values)
+        result["adaptive_k_thresholds"] = list(self.adaptive_k_thresholds)
+        result["adaptive_k_schedule"] = dict(self.adaptive_k_schedule)
         return result
