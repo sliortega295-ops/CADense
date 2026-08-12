@@ -232,7 +232,10 @@ def main() -> int:
             contract_errors.append(
                 f"{row['prompt_id']} step={row['step']} block={row['block']}: invalid K=9 boundary mesh"
             )
-        if row["oracle_nmse"] > row["proxy_nmse"] + 1.0e-8:
+        # The DP objective is accumulated from a float32 Gram matrix while the
+        # reporting metric reconstructs tensors directly. Allow only tiny
+        # numerical disagreement, as observed by the preregistered smoke test.
+        if row["oracle_nmse"] > row["proxy_nmse"] + 1.0e-6:
             contract_errors.append(
                 f"{row['prompt_id']} step={row['step']} block={row['block']}: exact oracle worse than proxy"
             )
