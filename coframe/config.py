@@ -94,6 +94,10 @@ class CoFrameConfig:
     # one matched group input; "current" evaluates only the deployed schedule's
     # K. Neither mode changes the generation trajectory.
     calibrated_budget_probe_mode: CalibratedBudgetProbeMode = "none"
+    # Empty preserves the historical behavior of probing every sparse group.
+    # Otherwise only exact "step:group" slots are probed; trajectory budgets
+    # are unaffected in either case.
+    calibrated_budget_probe_slots: Sequence[str] = field(default_factory=tuple)
 
     # Counterfactual factorial screen for within-step trajectory interactions.
     # The JSON plan is preregistered and probes are discarded; the deployed
@@ -114,6 +118,20 @@ class CoFrameConfig:
             raise ValueError(
                 f"Unsupported calibrated_budget_probe_mode: {self.calibrated_budget_probe_mode}"
             )
+        normalized_probe_slots: list[str] = []
+        for value in self.calibrated_budget_probe_slots:
+            try:
+                step_text, group_text = str(value).split(":", 1)
+                step, group = int(step_text), int(group_text)
+            except (TypeError, ValueError) as error:
+                raise ValueError("calibrated_budget_probe_slots must use integer step:group keys") from error
+            if step < 0 or group < 0:
+                raise ValueError("calibrated_budget_probe_slots must be non-negative")
+            normalized_probe_slots.append(f"{step}:{group}")
+        if len(normalized_probe_slots) != len(set(normalized_probe_slots)):
+            raise ValueError("calibrated_budget_probe_slots must be unique")
+        if self.calibrated_budget_probe_mode == "none" and normalized_probe_slots:
+            raise ValueError("calibrated_budget_probe_slots require an enabled calibrated probe mode")
         budget_values = [int(value) for value in self.adaptive_k_values]
         if self.trajectory_interaction_plan:
             if self.calibrated_budget_probe_mode != "none":
@@ -161,6 +179,9 @@ class CoFrameConfig:
                 raise ValueError("calibrated budget probes require sparse blocks 3-26 in groups of 3")
             if self.num_anchors != 9:
                 raise ValueError("calibrated budget probes require the K=9 default budget")
+            group_count = (self.sparse_block_end - self.sparse_block_start) // self.block_group_size
+            if any(int(value.split(":", 1)[1]) >= group_count for value in normalized_probe_slots):
+                raise ValueError("calibrated_budget_probe_slots contain a group outside the sparse region")
         if self.fis_anchor_stride < 0:
             raise ValueError("fis_anchor_stride must be >= 0")
         if self.fis_dense_tail_steps < 0:
@@ -224,6 +245,12 @@ class CoFrameConfig:
             return step_index < max(0, total_steps - self.fis_dense_tail_steps)
         return True
 
+    def should_probe_calibrated_budget(self, step_index: int, group_index: int) -> bool:
+        if self.calibrated_budget_probe_mode == "none":
+            return False
+        slots = {str(value) for value in self.calibrated_budget_probe_slots}
+        return not slots or f"{int(step_index)}:{int(group_index)}" in slots
+
     def to_dict(self) -> dict[str, Any]:
         result = asdict(self)
         result["oracle_probe_steps"] = list(self.oracle_probe_steps)
@@ -232,6 +259,7 @@ class CoFrameConfig:
         result["probe_counterfactual_methods"] = list(self.probe_counterfactual_methods)
         result["adaptive_k_values"] = list(self.adaptive_k_values)
         result["adaptive_k_thresholds"] = list(self.adaptive_k_thresholds)
+        result["calibrated_budget_probe_slots"] = list(self.calibrated_budget_probe_slots)
         result["adaptive_k_schedule"] = dict(self.adaptive_k_schedule)
         result["trajectory_interaction_plan"] = dict(self.trajectory_interaction_plan)
         return result

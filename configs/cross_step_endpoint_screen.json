@@ -1,0 +1,284 @@
+{
+  "schema_version": "coframe.cross-step-endpoint-screen.v1",
+  "experiment_id": "cross-step-endpoint-screen-20260813",
+  "base_trajectory_k": 9,
+  "budget_values": [
+    6,
+    9,
+    12,
+    21
+  ],
+  "arms": [
+    {
+      "arm_id": "k9_k9",
+      "k_i": 9,
+      "k_j": 9
+    },
+    {
+      "arm_id": "k6_k9",
+      "k_i": 6,
+      "k_j": 9
+    },
+    {
+      "arm_id": "k9_k12",
+      "k_i": 9,
+      "k_j": 12
+    },
+    {
+      "arm_id": "k6_k12",
+      "k_i": 6,
+      "k_j": 12
+    },
+    {
+      "arm_id": "k12_k9",
+      "k_i": 12,
+      "k_j": 9
+    },
+    {
+      "arm_id": "k9_k6",
+      "k_i": 9,
+      "k_j": 6
+    },
+    {
+      "arm_id": "k12_k6",
+      "k_i": 12,
+      "k_j": 6
+    }
+  ],
+  "orientations": {
+    "12_to_6": {
+      "role": "primary",
+      "h00": "k9_k9",
+      "h10": "k12_k9",
+      "h01": "k9_k6",
+      "h11": "k12_k6"
+    },
+    "6_to_12": {
+      "role": "reverse_control",
+      "h00": "k9_k9",
+      "h10": "k6_k9",
+      "h01": "k9_k12",
+      "h11": "k6_k12"
+    }
+  },
+  "pairs": [
+    {
+      "pair_id": "step22_g0_to_step44_g5",
+      "i": {
+        "step": 22,
+        "group": 0
+      },
+      "j": {
+        "step": 44,
+        "group": 5
+      }
+    },
+    {
+      "pair_id": "step22_g0_to_step47_g3",
+      "i": {
+        "step": 22,
+        "group": 0
+      },
+      "j": {
+        "step": 47,
+        "group": 3
+      }
+    },
+    {
+      "pair_id": "step22_g0_to_step49_g2",
+      "i": {
+        "step": 22,
+        "group": 0
+      },
+      "j": {
+        "step": 49,
+        "group": 2
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "prompt_id": "p0_s0",
+      "text": "A red toy car moves smoothly from left to right across a wooden table."
+    },
+    {
+      "prompt_id": "p1_s0",
+      "text": "A red toy car makes a sharp U-turn around a blue cube."
+    },
+    {
+      "prompt_id": "p2_s0",
+      "text": "A gymnast performs a fast cartwheel and lands upright."
+    },
+    {
+      "prompt_id": "p3_s0",
+      "text": "Two dancers cross paths, exchange positions, and continue in opposite directions."
+    },
+    {
+      "prompt_id": "p4_s0",
+      "text": "A brown dog jumps to catch a small yellow ball thrown through the air."
+    },
+    {
+      "prompt_id": "p5_s0",
+      "text": "A hummingbird rapidly moves between two red flowers while the camera remains fixed."
+    },
+    {
+      "prompt_id": "p6_s0",
+      "text": "The camera circles around a stationary bronze statue in a plaza."
+    },
+    {
+      "prompt_id": "p7_s0",
+      "text": "A cup sits on a table while steam rises slowly; the rest of the scene remains still."
+    }
+  ],
+  "seed": 0,
+  "runtime_contract": {
+    "model": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+    "height": 480,
+    "width": 832,
+    "decoded_frames": 81,
+    "latent_frames": 21,
+    "denoising_steps": 50,
+    "dense_warmup_steps": 5,
+    "sparse_block_start_inclusive": 3,
+    "sparse_block_end_exclusive": 27,
+    "block_group_size": 3,
+    "kv_mode": "full_kv",
+    "interpolation_target": "delta",
+    "anchor_selection": "uniform_select",
+    "force_boundaries": true,
+    "guidance_scale": 5.0,
+    "flow_shift": 3.0,
+    "independent_gpu_jobs": true,
+    "ddp": false,
+    "assigned_physical_gpus": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "gpu0_excluded_reason": "occupied at launch; allocation-only deviation",
+    "latency": "NOT_REPORTED"
+  },
+  "completeness": {
+    "prompt_count": 8,
+    "pair_count": 3,
+    "arms_per_pair": 7,
+    "orientation_count": 2,
+    "logical_arm_records": 168,
+    "orientation_records": 48,
+    "unique_physical_schedules_per_prompt": 15,
+    "unique_physical_schedules_total": 120,
+    "dense_reference_runs": 8,
+    "physical_schedule_formula": "1 baseline + 2 shared i-only + 3 * (2 j-only + 2 joint)"
+  },
+  "surface_input": {
+    "external_path": "inputs/calibrated_step_block/budget_error_surface.csv",
+    "release_tag": "coframe-calibrated-step-block-budget-20260812",
+    "release_asset": "budget_error_surface.csv",
+    "sha256": "de0c409905a0f77b341001559edb6bb10ee0750cf2fab66f12f25528a63819b5",
+    "schema_columns": [
+      "prompt_id",
+      "step",
+      "group",
+      "slot",
+      "block_start",
+      "block_end",
+      "k",
+      "operator_nmse",
+      "operator_relative_l2",
+      "operator_reference_energy",
+      "propagation_h3_nmse",
+      "propagation_h3_relative_l2",
+      "propagation_h3_reference_energy",
+      "anchors",
+      "trace_path"
+    ],
+    "join_key": [
+      "prompt_id",
+      "step",
+      "group",
+      "k"
+    ],
+    "expected_rows": 11520,
+    "required_metric_columns": [
+      "operator_nmse",
+      "propagation_h3_relative_l2"
+    ]
+  },
+  "gate": {
+    "primary_orientation": "12_to_6",
+    "reverse_control_orientation": "6_to_12",
+    "interaction": {
+      "scalar_metrics": [
+        "endpoint_nmse",
+        "endpoint_temporal_gradient_relative_l2"
+      ],
+      "rho_threshold": 0.25,
+      "prompt_pair_aggregation": "median across 3 pairs within each prompt",
+      "overall_prompt_median_min": 0.25,
+      "prompt_pass_min": 6,
+      "prompt_count": 8,
+      "endpoint_nmse_pair_median_pass_min": 2,
+      "pair_count": 3,
+      "endpoint_nmse_pair_median_threshold": 0.25,
+      "final_latent_vector_rho_pooled_median_min": 0.1,
+      "reverse_control_can_rescue": false,
+      "meaningful_sign_flip_is_gate": false
+    },
+    "atomic_transfer": {
+      "comparison": "k12_k6 versus k9_k9",
+      "metrics": [
+        "endpoint_nmse",
+        "endpoint_temporal_gradient_relative_l2"
+      ],
+      "prompt_aggregation": "median across 3 pairs within each prompt",
+      "median_relative_improvement_strictly_positive": true,
+      "prompt_win_min": 6,
+      "prompt_count": 8,
+      "can_rescue_interaction_gate": false
+    },
+    "objective_alignment": {
+      "deduplicated_singleton_effect_count": 64,
+      "singleton_formula": "8 prompts * (2 shared i-only + 3 * 2 j-only)",
+      "predictors": [
+        "operator_nmse_delta",
+        "propagation_h3_relative_l2_delta"
+      ],
+      "outcomes": [
+        "endpoint_nmse_delta",
+        "endpoint_temporal_gradient_relative_l2_delta"
+      ],
+      "combinations": "Cartesian product of 2 predictors and 2 outcomes; all four reported",
+      "within_prompt_spearman_aggregation": "median across the 8 prompt-specific Spearman correlations",
+      "median_within_prompt_spearman_min": 0.5,
+      "prompt_cluster_bootstrap_samples": 20000,
+      "prompt_cluster_bootstrap_seed": 20260813,
+      "prompt_cluster_bootstrap_ci": 0.95,
+      "prompt_cluster_bootstrap_ci_lower_strictly_positive": true,
+      "prompt_balanced_sign_agreement_min": 0.75,
+      "prompt_sign_agreement_min": 0.75,
+      "prompt_sign_pass_min": 6,
+      "prompt_count": 8,
+      "predictor_aligned_definition": "both endpoint outcomes pass for that predictor",
+      "operator_only_aligned_can_rescue_old_schedule": false,
+      "can_rescue_interaction_gate": false
+    }
+  },
+  "decision_labels": [
+    "ADVANCE_SEQUENTIAL_PLANNER",
+    "SUPPORT_CROSS_STEP_INTERACTION_NO_PLANNER_ADVANCE",
+    "SUPPORT_STATIC_BUDGET_TRANSFER_PRIOR",
+    "TEST_PLUS3_OBJECTIVE_LOPO",
+    "REJECT_CURRENT_CROSS_STEP_EXPLANATION",
+    "INCOMPLETE_CROSS_STEP_ENDPOINT_SCREEN"
+  ],
+  "out_of_scope": {
+    "online_selector": "NOT_RUN",
+    "sequential_planner": "NOT_RUN",
+    "mpc": "NOT_RUN",
+    "adaptive_k_runtime_controller": "NOT_RUN",
+    "video_decode": "NOT_RUN",
+    "perceptual_video_metrics": "NOT_RUN",
+    "latency_speedup": "NOT_REPORTED"
+  }
+}

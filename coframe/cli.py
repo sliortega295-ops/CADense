@@ -118,6 +118,12 @@ def build_parser() -> argparse.ArgumentParser:
             "surface evaluates K={6,9,12,21}; current evaluates the assigned schedule K"
         ),
     )
+    parser.add_argument(
+        "--calibrated-budget-probe-slots",
+        type=_csv_strings,
+        default=(),
+        help="Optional comma-separated step:group filter; empty probes every sparse group",
+    )
 
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--run-name", default=None)
@@ -195,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
         adaptive_k_schedule={str(key): int(value) for key, value in adaptive_k_schedule.items()},
         adaptive_k_carry_across_steps=not args.no_adaptive_k_carry,
         calibrated_budget_probe_mode=args.calibrated_budget_probe_mode,
+        calibrated_budget_probe_slots=args.calibrated_budget_probe_slots,
         trajectory_interaction_plan=trajectory_interaction_plan,
         trace_path=str(trace_path),
         strict_diffusers_version=not args.allow_unsupported_diffusers,

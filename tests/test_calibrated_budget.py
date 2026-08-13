@@ -43,6 +43,58 @@ def test_calibrated_budget_probe_contract_is_fail_closed():
         ).validate(num_frames=21, num_blocks=30)
 
 
+def test_calibrated_budget_probe_slot_filter_is_optional_and_fail_closed():
+    all_groups = CoFrameConfig(
+        method="adaptive_k",
+        adaptive_k_policy="step_block",
+        kv_mode="full_kv",
+        calibrated_budget_probe_mode="current",
+    )
+    assert all_groups.should_probe_calibrated_budget(5, 0)
+    assert all_groups.should_probe_calibrated_budget(49, 7)
+
+    filtered = CoFrameConfig(
+        method="adaptive_k",
+        adaptive_k_policy="step_block",
+        kv_mode="full_kv",
+        calibrated_budget_probe_mode="current",
+        calibrated_budget_probe_slots=("22:0", "44:5", "47:3", "49:2"),
+    )
+    filtered.validate(num_frames=21, num_blocks=30)
+    assert filtered.should_probe_calibrated_budget(22, 0)
+    assert filtered.should_probe_calibrated_budget(49, 2)
+    assert not filtered.should_probe_calibrated_budget(22, 1)
+    assert not filtered.should_probe_calibrated_budget(23, 0)
+    assert filtered.to_dict()["calibrated_budget_probe_slots"] == ["22:0", "44:5", "47:3", "49:2"]
+
+    with pytest.raises(ValueError, match="enabled calibrated probe mode"):
+        CoFrameConfig(calibrated_budget_probe_slots=("22:0",)).validate(num_frames=21, num_blocks=30)
+    with pytest.raises(ValueError, match="step:group"):
+        CoFrameConfig(
+            method="adaptive_k",
+            adaptive_k_policy="step_block",
+            kv_mode="full_kv",
+            calibrated_budget_probe_mode="current",
+            calibrated_budget_probe_slots=("bad",),
+        ).validate(num_frames=21, num_blocks=30)
+    with pytest.raises(ValueError, match="unique"):
+        CoFrameConfig(
+            method="adaptive_k",
+            adaptive_k_policy="step_block",
+            kv_mode="full_kv",
+            calibrated_budget_probe_mode="current",
+            calibrated_budget_probe_slots=("22:0", "22:0"),
+        ).validate(num_frames=21, num_blocks=30)
+    with pytest.raises(ValueError, match="outside the sparse region"):
+        CoFrameConfig(
+            method="adaptive_k",
+            adaptive_k_policy="step_block",
+            kv_mode="full_kv",
+            calibrated_budget_probe_mode="current",
+            calibrated_budget_probe_slots=("22:8",),
+        ).validate(num_frames=21, num_blocks=30)
+
+
 def test_trajectory_interaction_contract_is_fail_closed():
     plan = json.loads((ROOT / "configs" / "trajectory_interaction_screen.json").read_text())
     config = CoFrameConfig(

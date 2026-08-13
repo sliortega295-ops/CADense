@@ -25,6 +25,34 @@ class CoFrameGenerationOutput:
     metadata: dict[str, Any]
 
 
+def prepare_initial_latents(
+    pipe: Any,
+    *,
+    batch_size: int,
+    num_videos_per_prompt: int,
+    height: int,
+    width: int,
+    num_frames: int,
+    generator: torch.Generator | list[torch.Generator] | None,
+    latents: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Materialize one sampler input so several trajectories can share it exactly."""
+    if num_frames % pipe.vae_scale_factor_temporal != 1:
+        num_frames = num_frames // pipe.vae_scale_factor_temporal * pipe.vae_scale_factor_temporal + 1
+    num_frames = max(num_frames, 1)
+    return pipe.prepare_latents(
+        batch_size * num_videos_per_prompt,
+        pipe.transformer.config.in_channels,
+        height,
+        width,
+        num_frames,
+        torch.float32,
+        pipe._execution_device,
+        generator,
+        latents,
+    )
+
+
 def _dense_predict(
     pipe: Any,
     latents: torch.Tensor,
@@ -190,16 +218,15 @@ def coframe_wan_generate(
         raise RuntimeError("CoFrame requires a flow scheduler exposing sigmas")
     sigmas = pipe.scheduler.sigmas.to(device=device, dtype=torch.float32)
 
-    latents = pipe.prepare_latents(
-        batch_size * num_videos_per_prompt,
-        pipe.transformer.config.in_channels,
-        height,
-        width,
-        num_frames,
-        torch.float32,
-        device,
-        generator,
-        latents,
+    latents = prepare_initial_latents(
+        pipe,
+        batch_size=batch_size,
+        num_videos_per_prompt=num_videos_per_prompt,
+        height=height,
+        width=width,
+        num_frames=num_frames,
+        generator=generator,
+        latents=latents,
     )
     latent_frame_count = int(latents.shape[2])
     config.validate(num_blocks=len(pipe.transformer.blocks), num_frames=latent_frame_count)

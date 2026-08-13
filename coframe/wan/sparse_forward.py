@@ -1601,7 +1601,7 @@ def coframe_transformer_forward(
         if (
             replay_block_anchors is None
             and is_group_start
-            and config.calibrated_budget_probe_mode != "none"
+            and config.should_probe_calibrated_budget(step_index, adaptive_group_index)
         ):
             evaluated_budgets = (
                 tuple(int(value) for value in config.adaptive_k_values)
