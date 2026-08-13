@@ -10,6 +10,8 @@ SEED=${5:-0}
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"
+export USE_TF="${USE_TF:-0}"
+export USE_FLAX="${USE_FLAX:-0}"
 
 # GPU selection is deliberately external. The current launch allocation uses
 # physical GPUs 1-4, one prompt process per GPU; never hard-code CUDA indices in

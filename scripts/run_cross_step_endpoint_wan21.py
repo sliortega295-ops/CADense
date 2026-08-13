@@ -13,6 +13,13 @@ from typing import Any
 
 import torch
 
+# The shared node environment contains an incomplete TensorFlow installation.
+# Transformers otherwise detects it and fails while importing AutoImageProcessor,
+# even though this Wan path is PyTorch-only.  Freeze the intended backend before
+# importing any Diffusers/Transformers modules.
+os.environ.setdefault("USE_TF", "0")
+os.environ.setdefault("USE_FLAX", "0")
+
 from coframe.config import CoFrameConfig
 from coframe.cross_step_endpoint import (
     BASE_K,
