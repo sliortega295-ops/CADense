@@ -40,6 +40,7 @@ from coframe.cross_step_interaction import (
 
 LATENT_SCHEMA = "coframe.cross-step-endpoint-latents.v1"
 SUMMARY_SCHEMA = "coframe.cross-step-endpoint-run-summary.v1"
+LEGACY_RUN_SOURCE_COMMIT = "44ff4feaace3cbc701d4018d5319d2cad43876e6"
 SURFACE_SHA256 = "de0c409905a0f77b341001559edb6bb10ee0750cf2fab66f12f25528a63819b5"
 
 
@@ -183,7 +184,16 @@ def _run_payload(prompt_root: Path, prompt: str, run_id: str) -> tuple[torch.Ten
     summary = _read_json(run_dir / "summary.json")
     trace = _read_json(run_dir / "trace.json")
     tensor, latent_meta = _load_latent(run_dir / "latents.pt", expected_prompt=prompt, expected_run=run_id)
-    if summary.get("schema_version") != SUMMARY_SCHEMA or summary.get("status") != "success" or not summary.get("finite"):
+    # The frozen 44ff4fe trajectories were written before the summary dict
+    # ordering bug was noticed: expanding the latent metadata overwrote the
+    # intended run-summary schema with LATENT_SCHEMA.  Accept that exact,
+    # source-pinned legacy form so the completed preregistered run can be
+    # analyzed without mutating raw evidence; future runs emit SUMMARY_SCHEMA.
+    schema_ok = summary.get("schema_version") == SUMMARY_SCHEMA or (
+        summary.get("schema_version") == LATENT_SCHEMA
+        and summary.get("source_commit") == LEGACY_RUN_SOURCE_COMMIT
+    )
+    if not schema_ok or summary.get("status") != "success" or not summary.get("finite"):
         raise ValueError(f"{prompt}/{run_id}: summary status/schema failure")
     if summary.get("latent_shape") != [1, 16, 21, 60, 104] or summary.get("latent_frame_dim") != 2:
         raise ValueError(f"{prompt}/{run_id}: summary latent contract failure")

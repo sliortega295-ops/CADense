@@ -261,9 +261,12 @@ def _save_run(
     }
     torch.save(payload, latent_path)
     summary = {
+        **{key: value for key, value in payload.items() if key != "latents"},
+        # Keep the run-summary schema authoritative.  The latent payload also
+        # carries a schema_version, so placing this before the expansion would
+        # silently overwrite it with LATENT_SCHEMA.
         "schema_version": SUMMARY_SCHEMA,
         "status": "success",
-        **{key: value for key, value in payload.items() if key != "latents"},
         "physical_schedule_path": None if physical_schedule_path is None else str(physical_schedule_path),
         "trace_path": str(trace_path),
         "latent_path": str(latent_path),
