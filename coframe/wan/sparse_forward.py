@@ -888,22 +888,15 @@ def coframe_transformer_forward(
                 metadata.budget_events.append(assignment)
                 controller.budget_history.append(dict(assignment))
         elif config.method == "coframe_ode":
-            group_count = max(
-                1,
-                math.ceil((config.sparse_block_end - config.sparse_block_start) / config.block_group_size),
-            )
-            phase_index = adaptive_group_index
-            if config.ode_interleave_across_steps:
-                phase_index += step_index * group_count
+            # K is fixed within this denoising step by the ODE-path controller.
+            # The exact frame positions are then updated between block groups
+            # using leave-one-out residual defects measured on already-computed
+            # interior anchors. No dense reference or extra DiT forward is used.
             if is_group_start or current_group_anchors is None:
-                current_group_anchors = coverage_interleaved_select(
-                    geometry.num_frames,
-                    int(controller.current_budget),
-                    phase_index,
-                    force_boundaries=config.force_boundaries,
-                    anchor_stride=config.ode_anchor_stride,
-                    reuse_penalty=config.ode_interleave_penalty,
-                )
+                target_budget = int(controller.current_budget)
+                if controller.num_anchors != target_budget:
+                    controller.set_budget(target_budget)
+                current_group_anchors = list(controller.anchors)
             anchors = list(current_group_anchors)
             if is_group_start:
                 metadata.budget_events.append(
@@ -914,7 +907,7 @@ def coframe_transformer_forward(
                         "policy": "ode_path",
                         "assigned_k": int(controller.current_budget),
                         "source": "previous_step_trajectory",
-                        "phase_index": int(phase_index),
+                        "placement": "loo_residual_defect",
                     }
                 )
         elif config.method == "fis":
@@ -946,6 +939,10 @@ def coframe_transformer_forward(
                 or (
                     config.method == "adaptive_k"
                     and ((update_controller and config.adaptive_k_policy in {"mean_defect", "max_defect"}) or dense_output is not None)
+                )
+                or (
+                    config.method == "coframe_ode"
+                    and (update_controller or dense_output is not None)
                 )
             )
         )
@@ -1052,6 +1049,32 @@ def coframe_transformer_forward(
                         metadata.refresh_events.append(entry)
                         if trace is not None:
                             trace.add("mesh_refresh", **entry)
+            if config.method == "coframe_ode" and update_controller:
+                aggregated = {
+                    frame: sum(values) / len(values)
+                    for frame, values in group_defects.items()
+                    if values
+                }
+                if aggregated:
+                    controller.observe(aggregated, anchors=anchors)
+                    if sparse_group_index % config.refresh_every_groups == 0:
+                        refreshes = controller.refresh()
+                        for refresh in refreshes:
+                            entry = {
+                                "step": step_index,
+                                "after_block": block_index,
+                                "group": sparse_group_index,
+                                "refresh_signal": "loo_residual_defect",
+                                "defect_mean": sum(aggregated.values()) / len(aggregated),
+                                "defect_max": max(aggregated.values()),
+                                **refresh.to_dict(),
+                            }
+                            metadata.refresh_events.append(entry)
+                            if trace is not None:
+                                trace.add("mesh_refresh", **entry)
+                # The refreshed controller mesh becomes the next group's mesh.
+                current_group_anchors = list(controller.anchors)
+
             if config.method == "adaptive_k" and update_controller and config.adaptive_k_policy in {"mean_defect", "max_defect"}:
                 samples = [value for values in group_defects.values() for value in values]
                 statistic = "mean" if config.adaptive_k_policy == "mean_defect" else "max"

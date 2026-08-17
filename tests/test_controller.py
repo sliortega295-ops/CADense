@@ -60,3 +60,14 @@ def test_approximation_risk_is_zero_on_exact_anchors():
     expected = controller.approximation_risk([0, 4, 8, 12])
     assert torch.all(expected[torch.tensor([0, 4, 8, 12])] == 0)
     assert torch.all(expected[torch.tensor([1, 2, 3, 5, 6, 7, 9, 10, 11])] > 0)
+
+
+def test_set_budget_resizes_mesh_and_preserves_risk():
+    controller = make_controller()
+    controller.dynamic_risk[6] = 3.0
+    anchors = controller.set_budget(6)
+    assert len(anchors) == 6
+    assert anchors[0] == 0 and anchors[-1] == 12
+    assert controller.current_budget == 6
+    assert controller.num_anchors == 6
+    assert controller.dynamic_risk[6] == 3.0

@@ -1,12 +1,12 @@
 # CoFrame
 
-**ODE-Path-Aware Frame Budgets and Coverage-Aware Sparse Video Diffusion**
+**ODE-Path-Aware Frame Budgets with Self-Validating Sparse Video Diffusion**
 
 CoFrame is a training-free research prototype for block-conditional sparse-frame computation in **Wan2.1-T2V-1.3B**. The current proposed path separates two decisions:
 
 > How many frames should receive exact computation at the next denoising step, and where should those exact frames be placed inside each sparse block group?
 
-`--method coframe_ode` uses current trajectory signals to allocate the next step's frame budget, then applies deterministic coverage-aware interleaving across block groups. The earlier leave-one-out defect controller remains available as `--method coframe` so all negative and diagnostic experiments stay reproducible. The code targets `diffusers==0.34.0` and does not modify model weights.
+`--method coframe_ode` uses current trajectory signals to allocate the next step's frame budget. Inside that step, already-computed exact anchors validate their own residual interpolation through a leave-one-out defect, and the resulting risk field remeshes the next block group. The earlier fixed-K variant remains available as `--method coframe` for reproducibility. The code targets `diffusers==0.34.0` and does not modify model weights.
 
 ## Historical mechanism experiments
 
@@ -27,7 +27,7 @@ This isolates CoFrame's incremental contribution over the already-good Rhyme sel
 | `fixed` | uniform fixed budget | no | static frame-selection baseline |
 | `rhyme` | clean-latent sequential cosine | no | strong content-aware baseline |
 | `coframe` | same Rhyme initialization | leave-one-out block defect | legacy mechanism ablation |
-| `coframe_ode` | coverage-aware interleaving | step-level ODE/path budget | current proposed path |
+| `coframe_ode` | LOO residual-defect remeshing | step-level ODE/path budget + group-level self-validation | current proposed path |
 
 All sparse methods can use either:
 
@@ -95,7 +95,7 @@ bash scripts/run_ode_coframe_wan21.sh \
   0
 ```
 
-The default controller supports arbitrary integer frame budgets within its resolved range and exactly conserves the configured average frame budget across sparse steps. See `docs/ODE_PATH_COFRAME.md` for the causal and execution contract.
+The default controller supports arbitrary integer frame budgets within its resolved range and exactly conserves the configured average frame budget across sparse steps. Within each sparse step, exact interior anchors are compared against leave-one-out residual interpolation and the measured defect updates the next block-group mesh. See `docs/ODE_PATH_COFRAME.md` for the causal and execution contract.
 
 ## Canonical Wan2.1-1.3B validation
 

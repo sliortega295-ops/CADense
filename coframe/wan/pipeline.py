@@ -101,7 +101,7 @@ def _make_controller(
         min_refresh_gain=config.min_refresh_gain,
         max_swaps_per_refresh=(
             config.max_swaps_per_refresh
-            if config.method == "coframe" and config.refresh_signal != "none"
+            if (config.method == "coframe_ode" or (config.method == "coframe" and config.refresh_signal != "none"))
             else 0
         ),
         defect_clip=config.defect_clip,
@@ -332,7 +332,7 @@ def coframe_wan_generate(
                     controller=controller,
                     step_index=step_index,
                     replay_block_anchors=None,
-                    update_controller=config.method in {"coframe", "adaptive_k"},
+                    update_controller=config.method in {"coframe", "adaptive_k", "coframe_ode"},
                     attention_kwargs=attention_kwargs,
                     trace=trace,
                 )

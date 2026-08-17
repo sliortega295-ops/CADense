@@ -94,6 +94,27 @@ class AdaptiveMeshController:
         self.current_budget = int(num_anchors)
         self.budget_history: list[dict[str, Any]] = []
 
+    def set_budget(self, num_anchors: int, *, reset_dynamic_risk: bool = False) -> list[int]:
+        """Resize the exact-frame mesh while preserving frame-wise risk evidence.
+
+        ODE-path allocation can change K between denoising steps. When K changes,
+        start that step from a uniform boundary-preserving mesh; subsequent block
+        groups immediately adapt it using leave-one-out residual defects.
+        """
+        target = int(num_anchors)
+        if not 1 <= target <= self.num_frames:
+            raise ValueError("num_anchors must lie in [1, num_frames]")
+        if self.force_boundaries and self.num_frames > 1 and target < 2:
+            raise ValueError("at least two anchors are required when boundaries are forced")
+        if target != self.num_anchors:
+            self.num_anchors = target
+            self.anchors = uniform_select(self.num_frames, target, self.force_boundaries)
+        self.current_budget = target
+        if reset_dynamic_risk:
+            self.dynamic_risk.zero_()
+            self.observation_count.zero_()
+        return list(self.anchors)
+
     @property
     def risk(self) -> torch.Tensor:
         return self.risk_floor + self.prior_weight * self.prior + self.dynamic_risk

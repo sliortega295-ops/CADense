@@ -162,7 +162,7 @@ def test_conditional_schedule_can_be_replayed_for_cfg(monkeypatch):
     assert torch.isfinite(conditional).all()
     assert torch.isfinite(unconditional).all()
 
-def test_ode_coframe_uses_group_level_interleaving(monkeypatch):
+def test_ode_coframe_uses_group_level_loo_defects(monkeypatch):
     monkeypatch.setattr(sparse_module, "require_diffusers_034", lambda strict=True: "0.34.0")
     torch.manual_seed(17)
     transformer = Transformer()
@@ -177,6 +177,10 @@ def test_ode_coframe_uses_group_level_interleaving(monkeypatch):
         block_group_size=1,
         kv_mode="full_kv",
         sketch_dim=0,
+        risk_ema=0.0,
+        move_penalty=0.0,
+        min_refresh_gain=0.0,
+        max_swaps_per_refresh=1,
     )
     controller = AdaptiveMeshController(
         num_frames=5,
@@ -184,6 +188,10 @@ def test_ode_coframe_uses_group_level_interleaving(monkeypatch):
         initial_anchors=[0, 2, 4],
         prior_scores=torch.zeros(5),
         prior_weight=0.0,
+        risk_ema=0.0,
+        move_penalty=0.0,
+        min_refresh_gain=0.0,
+        max_swaps_per_refresh=1,
     )
     controller.current_budget = 3
 
@@ -195,7 +203,7 @@ def test_ode_coframe_uses_group_level_interleaving(monkeypatch):
         config=config,
         controller=controller,
         step_index=1,
-        update_controller=False,
+        update_controller=True,
     )
     replayed, replay_meta = sparse_module.coframe_transformer_forward(
         transformer,
@@ -212,5 +220,8 @@ def test_ode_coframe_uses_group_level_interleaving(monkeypatch):
     assert conditional.shape == replayed.shape == hidden.shape
     assert cond_meta.block_anchors == replay_meta.block_anchors
     assert all(len(mesh) == 3 for mesh in cond_meta.block_anchors.values())
-    assert cond_meta.block_anchors[0] != cond_meta.block_anchors[1]
+    assert len(cond_meta.defects) == 2
+    assert all(entry["values"] for entry in cond_meta.defects)
+    assert len(cond_meta.refresh_events) >= 1
+    assert all(event["refresh_signal"] == "loo_residual_defect" for event in cond_meta.refresh_events)
     assert all(mesh[0] == 0 and mesh[-1] == 4 for mesh in cond_meta.block_anchors.values())

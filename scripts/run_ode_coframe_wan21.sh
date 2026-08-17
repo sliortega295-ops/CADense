@@ -14,5 +14,6 @@ python -m coframe.cli \
   --sparse-block-start 3 --sparse-block-end 27 --block-group-size 3 \
   --kv-mode anchor_only \
   --interpolation-target delta \
+  --decode --vae-tiling \
   --output-dir "$OUT_ROOT" \
   --run-name "coframe_ode_seed${SEED}"
