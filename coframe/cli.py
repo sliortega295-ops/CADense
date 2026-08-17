@@ -44,6 +44,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
+@torch.inference_mode()
 def _decode_wan_latents(pipe: Any, latents: torch.Tensor) -> list[Any]:
     latents = latents.to(device=pipe.vae.device, dtype=pipe.vae.dtype)
     latent_mean = torch.tensor(pipe.vae.config.latents_mean, device=latents.device, dtype=latents.dtype).view(
