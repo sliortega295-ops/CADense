@@ -9,6 +9,7 @@ from coframe.ode_budget import (
     temporal_velocity_curvature,
 )
 from coframe.selection import coverage_interleaved_select
+from coframe.wan.pipeline import _require_flow_prediction_scheduler
 
 
 def test_flow_clean_endpoint_matches_flow_parameterization():
@@ -66,9 +67,22 @@ def test_unreachable_discrete_codebook_fails_closed():
 
 
 def test_coverage_interleaving_keeps_budget_boundaries_and_changes_phase():
-    first = coverage_interleaved_select(21, 9, 0)
-    second = coverage_interleaved_select(21, 9, 1)
-    assert len(first) == len(second) == 9
-    assert first[0] == second[0] == 0
-    assert first[-1] == second[-1] == 20
-    assert first != second
+    meshes = [coverage_interleaved_select(21, 9, phase) for phase in range(3)]
+    assert all(len(mesh) == 9 for mesh in meshes)
+    assert all(mesh[0] == 0 and mesh[-1] == 20 for mesh in meshes)
+    assert len({tuple(mesh) for mesh in meshes}) == 3
+    assert all(max(right - left for left, right in zip(mesh[:-1], mesh[1:])) <= 3 for mesh in meshes)
+
+
+def test_flow_scheduler_contract_fails_closed():
+    class Scheduler:
+        pass
+
+    flow = Scheduler()
+    flow.config = type("Config", (), {"prediction_type": "flow_prediction", "use_flow_sigmas": True})()
+    _require_flow_prediction_scheduler(flow)
+
+    epsilon = Scheduler()
+    epsilon.config = type("Config", (), {"prediction_type": "epsilon", "use_flow_sigmas": False})()
+    with pytest.raises(RuntimeError, match="flow-prediction"):
+        _require_flow_prediction_scheduler(epsilon)

@@ -101,6 +101,7 @@ class CoFrameConfig:
     ode_endpoint_weight: float = 0.5
     ode_difficulty_power: float = 1.0 / 3.0
     ode_anchor_stride: int = 0
+    ode_interleave_penalty: float = 2.0
     ode_interleave_across_steps: bool = True
 
     trace_path: str | None = None
@@ -143,6 +144,8 @@ class CoFrameConfig:
             raise ValueError("ODE anchor bounds must be non-negative; zero selects the automatic bound")
         if self.ode_anchor_stride < 0:
             raise ValueError("ode_anchor_stride must be >= 0")
+        if self.ode_interleave_penalty < 0.0:
+            raise ValueError("ode_interleave_penalty must be non-negative")
         ode_values = [int(value) for value in self.ode_budget_values]
         if ode_values and ode_values != sorted(set(ode_values)):
             raise ValueError("ode_budget_values must be strictly increasing when provided")

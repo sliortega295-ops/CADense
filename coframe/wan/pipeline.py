@@ -116,6 +116,20 @@ def _cuda_sync() -> None:
         torch.cuda.synchronize()
 
 
+def _require_flow_prediction_scheduler(scheduler: Any) -> None:
+    """Fail closed before applying the flow clean-endpoint conversion."""
+    scheduler_name = type(scheduler).__name__
+    scheduler_config = getattr(scheduler, "config", None)
+    prediction_type = getattr(scheduler_config, "prediction_type", None)
+    use_flow_sigmas = bool(getattr(scheduler_config, "use_flow_sigmas", False))
+    native_flow_scheduler = scheduler_name.startswith("FlowMatch")
+    if not native_flow_scheduler and not (prediction_type == "flow_prediction" and use_flow_sigmas):
+        raise RuntimeError(
+            "coframe_ode requires a flow-prediction scheduler: either a FlowMatch scheduler or "
+            "prediction_type='flow_prediction' with use_flow_sigmas=True"
+        )
+
+
 @torch.no_grad()
 def coframe_wan_generate(
     pipe: Any,
@@ -188,7 +202,9 @@ def coframe_wan_generate(
     pipe.scheduler.set_timesteps(num_inference_steps, device=device)
     timesteps = pipe.scheduler.timesteps
     if not hasattr(pipe.scheduler, "sigmas"):
-        raise RuntimeError("CoFrame requires a flow scheduler exposing sigmas")
+        raise RuntimeError("CoFrame requires a scheduler exposing sigmas")
+    if config.method == "coframe_ode":
+        _require_flow_prediction_scheduler(pipe.scheduler)
     sigmas = pipe.scheduler.sigmas.to(device=device, dtype=torch.float32)
 
     latents = pipe.prepare_latents(
@@ -222,6 +238,7 @@ def coframe_wan_generate(
     initial_anchors: list[int] | None = None
     prior_scores: torch.Tensor | None = None
     transformer_events: list[dict[str, Any]] = []
+    last_sparse_anchors: list[int] | None = None
     ode_budget_controller: ODEPathBudgetController | None = None
     dense_step_count = 0
     sparse_step_count = 0
@@ -342,6 +359,9 @@ def coframe_wan_generate(
                     noise_pred = noise_cond.float()
                 sparse_step_count += 1
                 transformer_events.append(cond_metadata.to_dict())
+                if cond_metadata.block_anchors:
+                    final_block = max(cond_metadata.block_anchors)
+                    last_sparse_anchors = list(cond_metadata.block_anchors[final_block])
 
             if ode_budget_controller is not None:
                 sigma = sigmas[step_index].to(device=latents.device, dtype=torch.float32)
@@ -381,7 +401,11 @@ def coframe_wan_generate(
         "dense_steps": dense_step_count,
         "sparse_steps": sparse_step_count,
         "initial_anchors": initial_anchors,
-        "final_anchors": None if controller is None else list(controller.anchors),
+        "final_anchors": (
+            last_sparse_anchors
+            if last_sparse_anchors is not None
+            else (None if controller is None else list(controller.anchors))
+        ),
         "final_budget": None if controller is None else int(controller.current_budget),
         "latent_shape": list(latents.shape),
         "transformer_events": transformer_events,

@@ -847,6 +847,7 @@ def coframe_transformer_forward(
     group_defects: dict[int, list[float]] = {}
     sparse_group_index = 0
     previous_delta_curvature: torch.Tensor | None = None
+    current_group_anchors: list[int] | None = None
     if config.method == "adaptive_k" and not config.adaptive_k_carry_across_steps:
         controller.current_budget = int(config.num_anchors)
 
@@ -894,13 +895,16 @@ def coframe_transformer_forward(
             phase_index = adaptive_group_index
             if config.ode_interleave_across_steps:
                 phase_index += step_index * group_count
-            anchors = coverage_interleaved_select(
-                geometry.num_frames,
-                int(controller.current_budget),
-                phase_index,
-                force_boundaries=config.force_boundaries,
-                anchor_stride=config.ode_anchor_stride,
-            )
+            if is_group_start or current_group_anchors is None:
+                current_group_anchors = coverage_interleaved_select(
+                    geometry.num_frames,
+                    int(controller.current_budget),
+                    phase_index,
+                    force_boundaries=config.force_boundaries,
+                    anchor_stride=config.ode_anchor_stride,
+                    reuse_penalty=config.ode_interleave_penalty,
+                )
+            anchors = list(current_group_anchors)
             if is_group_start:
                 metadata.budget_events.append(
                     {

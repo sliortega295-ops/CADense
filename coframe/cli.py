@@ -122,6 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ode-endpoint-weight", type=float, default=0.5)
     parser.add_argument("--ode-difficulty-power", type=float, default=1.0 / 3.0)
     parser.add_argument("--ode-anchor-stride", type=int, default=0)
+    parser.add_argument("--ode-interleave-penalty", type=float, default=2.0)
     parser.add_argument("--no-ode-interleave-across-steps", action="store_true")
 
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -203,6 +204,7 @@ def main(argv: list[str] | None = None) -> int:
         ode_endpoint_weight=args.ode_endpoint_weight,
         ode_difficulty_power=args.ode_difficulty_power,
         ode_anchor_stride=args.ode_anchor_stride,
+        ode_interleave_penalty=args.ode_interleave_penalty,
         ode_interleave_across_steps=not args.no_ode_interleave_across_steps,
         trace_path=str(trace_path),
         strict_diffusers_version=not args.allow_unsupported_diffusers,
