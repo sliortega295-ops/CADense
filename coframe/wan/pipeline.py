@@ -8,6 +8,7 @@ import torch
 
 from ..config import CoFrameConfig
 from ..controller import AdaptiveMeshController
+from ..ode_budget import ODEPathBudgetController
 from ..selection import (
     fis_interleaved_select,
     frame_representations_from_clean_latents,
@@ -62,7 +63,7 @@ def _make_controller(
 
     controller_prior = prior
     controller_prior_weight = config.rhyme_prior_weight
-    if config.method in {"fixed", "adaptive_k"}:
+    if config.method in {"fixed", "adaptive_k", "coframe_ode"}:
         anchors = fixed_anchors
         controller_prior = torch.zeros_like(prior)
         controller_prior_weight = 0.0
@@ -135,7 +136,7 @@ def coframe_wan_generate(
     max_sequence_length: int = 512,
     config: CoFrameConfig | None = None,
 ) -> CoFrameGenerationOutput:
-    """Run dense/fixed/Rhyme/CoFrame under one Wan2.1 sampler contract."""
+    """Run dense and sparse CoFrame variants under one Wan2.1 sampler contract."""
     config = config or CoFrameConfig()
     require_diffusers_034(config.strict_diffusers_version)
     config.validate(num_blocks=len(pipe.transformer.blocks))
@@ -221,6 +222,7 @@ def coframe_wan_generate(
     initial_anchors: list[int] | None = None
     prior_scores: torch.Tensor | None = None
     transformer_events: list[dict[str, Any]] = []
+    ode_budget_controller: ODEPathBudgetController | None = None
     dense_step_count = 0
     sparse_step_count = 0
 
@@ -235,6 +237,28 @@ def coframe_wan_generate(
         # Always leave at least one sparse denoising step, including few-step
         # smoke tests. The canonical 50-step setting still uses warmup=5.
         effective_warmup = max(1, min(config.warmup_steps, num_inference_steps - 1))
+
+    if config.method == "coframe_ode":
+        controller, initial_anchors, prior_scores = _make_controller(config=config, clean_proxy=latents)
+        total_sparse_steps = sum(
+            1
+            for index in range(num_inference_steps)
+            if index >= effective_warmup and config.is_sparse_step(index, num_inference_steps)
+        )
+        ode_budget_controller = ODEPathBudgetController.from_config(
+            config,
+            num_frames=latent_frame_count,
+            total_sparse_steps=total_sparse_steps,
+        )
+        trace.add(
+            "mesh_initialization",
+            step=-1,
+            timestep=None,
+            anchors=initial_anchors,
+            prior_scores=prior_scores,
+            placement_policy="coverage_interleaved",
+        )
+        trace.add("ode_budget_initialization", **ode_budget_controller.state_dict())
 
     _cuda_sync()
     denoise_start = time.perf_counter()
@@ -319,6 +343,31 @@ def coframe_wan_generate(
                 sparse_step_count += 1
                 transformer_events.append(cond_metadata.to_dict())
 
+            if ode_budget_controller is not None:
+                sigma = sigmas[step_index].to(device=latents.device, dtype=torch.float32)
+                signal = ode_budget_controller.observe(
+                    step_index=step_index,
+                    sample=latents,
+                    velocity=noise_pred,
+                    sigma=sigma,
+                )
+                trace.add("ode_path_signal", **signal.to_dict())
+                next_step = step_index + 1
+                if (
+                    next_step < num_inference_steps
+                    and next_step >= effective_warmup
+                    and config.is_sparse_step(next_step, num_inference_steps)
+                ):
+                    budget_event = ode_budget_controller.allocate_next(
+                        source_step=step_index,
+                        target_step=next_step,
+                        difficulty=signal.difficulty,
+                    )
+                    assert controller is not None
+                    controller.current_budget = int(budget_event.assigned_budget)
+                    controller.budget_history.append(budget_event.to_dict())
+                    trace.add("budget_update", policy="ode_path", causal=True, **budget_event.to_dict())
+
             latents = pipe.scheduler.step(noise_pred, timestep_scalar, latents, return_dict=False)[0]
             progress_bar.update()
 
@@ -337,6 +386,7 @@ def coframe_wan_generate(
         "latent_shape": list(latents.shape),
         "transformer_events": transformer_events,
         "controller": None if controller is None else controller.state_dict(),
+        "ode_budget_controller": None if ode_budget_controller is None else ode_budget_controller.state_dict(),
         "config": config.to_dict(),
         "trace": trace.to_dict(),
     }

@@ -212,6 +212,35 @@ def _fit_interleaved_budget(
     return chosen[:num_anchors]
 
 
+def coverage_interleaved_select(
+    num_frames: int,
+    num_anchors: int,
+    phase_index: int,
+    *,
+    force_boundaries: bool = True,
+    anchor_stride: int = 0,
+) -> list[int]:
+    """Coverage-aware group-level interleaving with an exact frame budget.
+
+    A rotating residue class changes which frames receive exact computation.
+    Boundary insertion and largest-gap filling preserve temporal coverage while
+    returning exactly ``num_anchors`` indices for arbitrary integer budgets.
+    """
+    if num_frames < 1 or num_anchors < 1:
+        raise ValueError("num_frames and num_anchors must be positive")
+    if num_anchors >= num_frames:
+        return list(range(num_frames))
+    stride = int(anchor_stride) if int(anchor_stride) > 0 else max(1, math.ceil(num_frames / num_anchors))
+    phase = int(phase_index) % stride
+    selected = [frame for frame in range(num_frames) if (frame - phase) % stride == 0]
+    return _fit_interleaved_budget(
+        selected,
+        num_frames=num_frames,
+        num_anchors=num_anchors,
+        force_boundaries=force_boundaries,
+    )
+
+
 def fis_interleaved_select(
     num_frames: int,
     num_anchors: int,

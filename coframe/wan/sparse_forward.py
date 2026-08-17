@@ -28,7 +28,7 @@ from ..metrics import (
     optimal_piecewise_linear_mesh,
     reconstruction_metrics,
 )
-from ..selection import fis_interleaved_select, uniform_select
+from ..selection import coverage_interleaved_select, fis_interleaved_select, uniform_select
 from ..trace import CoFrameTrace
 
 
@@ -463,7 +463,7 @@ def _probe_entry(
     gram = frame_gram_matrix(mesh_target, chunk_size=config.oracle_metric_chunk_size)
     interval_costs = interpolation_interval_costs(gram)
     total_energy = float(torch.diagonal(gram).sum().item())
-    probe_budget = len(anchors) if config.method == "adaptive_k" else config.num_anchors
+    probe_budget = len(anchors) if config.method in {"adaptive_k", "coframe_ode"} else config.num_anchors
     fixed_anchors = uniform_select(
         geometry.num_frames,
         probe_budget,
@@ -471,7 +471,7 @@ def _probe_entry(
     )
     rhyme_anchors = (
         list(fixed_anchors)
-        if config.method == "adaptive_k"
+        if config.method in {"adaptive_k", "coframe_ode"}
         else list(getattr(controller, "rhyme_reference_anchors", controller.initial_anchors))
     )
     fis_anchors = fis_interleaved_select(
@@ -886,6 +886,33 @@ def coframe_transformer_forward(
                 }
                 metadata.budget_events.append(assignment)
                 controller.budget_history.append(dict(assignment))
+        elif config.method == "coframe_ode":
+            group_count = max(
+                1,
+                math.ceil((config.sparse_block_end - config.sparse_block_start) / config.block_group_size),
+            )
+            phase_index = adaptive_group_index
+            if config.ode_interleave_across_steps:
+                phase_index += step_index * group_count
+            anchors = coverage_interleaved_select(
+                geometry.num_frames,
+                int(controller.current_budget),
+                phase_index,
+                force_boundaries=config.force_boundaries,
+                anchor_stride=config.ode_anchor_stride,
+            )
+            if is_group_start:
+                metadata.budget_events.append(
+                    {
+                        "step": step_index,
+                        "group": adaptive_group_index,
+                        "after_block": block_index - 1,
+                        "policy": "ode_path",
+                        "assigned_k": int(controller.current_budget),
+                        "source": "previous_step_trajectory",
+                        "phase_index": int(phase_index),
+                    }
+                )
         elif config.method == "fis":
             anchors = fis_interleaved_select(
                 geometry.num_frames,

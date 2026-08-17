@@ -161,3 +161,56 @@ def test_conditional_schedule_can_be_replayed_for_cfg(monkeypatch):
     assert probe["propagated_relative_l2_h1"] >= 0.0
     assert torch.isfinite(conditional).all()
     assert torch.isfinite(unconditional).all()
+
+def test_ode_coframe_uses_group_level_interleaving(monkeypatch):
+    monkeypatch.setattr(sparse_module, "require_diffusers_034", lambda strict=True: "0.34.0")
+    torch.manual_seed(17)
+    transformer = Transformer()
+    hidden = torch.randn(1, 2, 5, 1, 2)
+    timestep = torch.tensor([500.0])
+    context = torch.randn(1, 3, 4)
+    config = CoFrameConfig(
+        method="coframe_ode",
+        num_anchors=3,
+        sparse_block_start=0,
+        sparse_block_end=2,
+        block_group_size=1,
+        kv_mode="full_kv",
+        sketch_dim=0,
+    )
+    controller = AdaptiveMeshController(
+        num_frames=5,
+        num_anchors=3,
+        initial_anchors=[0, 2, 4],
+        prior_scores=torch.zeros(5),
+        prior_weight=0.0,
+    )
+    controller.current_budget = 3
+
+    conditional, cond_meta = sparse_module.coframe_transformer_forward(
+        transformer,
+        hidden,
+        timestep,
+        context,
+        config=config,
+        controller=controller,
+        step_index=1,
+        update_controller=False,
+    )
+    replayed, replay_meta = sparse_module.coframe_transformer_forward(
+        transformer,
+        hidden,
+        timestep,
+        context * 0.0,
+        config=config,
+        controller=controller,
+        step_index=1,
+        replay_block_anchors=cond_meta.block_anchors,
+        update_controller=False,
+    )
+
+    assert conditional.shape == replayed.shape == hidden.shape
+    assert cond_meta.block_anchors == replay_meta.block_anchors
+    assert all(len(mesh) == 3 for mesh in cond_meta.block_anchors.values())
+    assert cond_meta.block_anchors[0] != cond_meta.block_anchors[1]
+    assert all(mesh[0] == 0 and mesh[-1] == 4 for mesh in cond_meta.block_anchors.values())
