@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, Sequence
 
-Method = Literal["dense", "fixed", "fis", "rhyme", "coframe", "adaptive_k"]
+Method = Literal["dense", "fixed", "fis", "rhyme", "coframe", "adaptive_k", "coframe_ode"]
 RefreshSignal = Literal["defect", "none", "gap_only", "shuffled"]
 BudgetPolicy = Literal["none", "step_block", "mean_defect", "max_defect"]
 KVMode = Literal["anchor_only", "full_kv"]
@@ -88,11 +88,27 @@ class CoFrameConfig:
     adaptive_k_schedule: dict[str, int] = field(default_factory=dict)
     adaptive_k_carry_across_steps: bool = True
 
+    # Current proposed path: step-level ODE/path-aware budget plus deterministic
+    # coverage-aware interleaved placement. Empty ode_budget_values means every
+    # integer budget in [ode_min_anchors, ode_max_anchors] is supported.
+    ode_target_average_k: float = 0.0  # 0 -> num_anchors
+    ode_min_anchors: int = 0  # 0 -> round(2/3 * target), respecting boundaries
+    ode_max_anchors: int = 0  # 0 -> all latent frames
+    ode_budget_values: Sequence[int] = field(default_factory=tuple)
+    ode_signal_ema: float = 0.9
+    ode_signal_clip: float = 4.0
+    ode_direction_weight: float = 0.5
+    ode_endpoint_weight: float = 0.5
+    ode_difficulty_power: float = 1.0 / 3.0
+    ode_anchor_stride: int = 0
+    ode_interleave_penalty: float = 2.0
+    ode_interleave_across_steps: bool = True
+
     trace_path: str | None = None
     strict_diffusers_version: bool = True
 
     def validate(self, *, num_blocks: int | None = None, num_frames: int | None = None) -> None:
-        if self.method not in {"dense", "fixed", "fis", "rhyme", "coframe", "adaptive_k"}:
+        if self.method not in {"dense", "fixed", "fis", "rhyme", "coframe", "adaptive_k", "coframe_ode"}:
             raise ValueError(f"Unsupported method: {self.method}")
         if self.refresh_signal not in {"defect", "none", "gap_only", "shuffled"}:
             raise ValueError(f"Unsupported refresh_signal: {self.refresh_signal}")
@@ -114,6 +130,27 @@ class CoFrameConfig:
             invalid_schedule = [value for value in self.adaptive_k_schedule.values() if int(value) not in budget_values]
             if invalid_schedule:
                 raise ValueError("adaptive_k_schedule contains a budget outside adaptive_k_values")
+        if not 0.0 <= self.ode_signal_ema < 1.0:
+            raise ValueError("ode_signal_ema must be in [0,1)")
+        if self.ode_signal_clip < 1.0:
+            raise ValueError("ode_signal_clip must be >= 1")
+        if self.ode_direction_weight < 0.0 or self.ode_endpoint_weight < 0.0:
+            raise ValueError("ODE difficulty weights must be non-negative")
+        if self.ode_direction_weight + self.ode_endpoint_weight <= 0.0:
+            raise ValueError("at least one ODE difficulty weight must be positive")
+        if self.ode_difficulty_power <= 0.0:
+            raise ValueError("ode_difficulty_power must be positive")
+        if self.ode_min_anchors < 0 or self.ode_max_anchors < 0:
+            raise ValueError("ODE anchor bounds must be non-negative; zero selects the automatic bound")
+        if self.ode_anchor_stride < 0:
+            raise ValueError("ode_anchor_stride must be >= 0")
+        if self.ode_interleave_penalty < 0.0:
+            raise ValueError("ode_interleave_penalty must be non-negative")
+        ode_values = [int(value) for value in self.ode_budget_values]
+        if ode_values and ode_values != sorted(set(ode_values)):
+            raise ValueError("ode_budget_values must be strictly increasing when provided")
+        if any(value < 1 for value in ode_values):
+            raise ValueError("ode_budget_values must be positive")
         if self.fis_anchor_stride < 0:
             raise ValueError("fis_anchor_stride must be >= 0")
         if self.fis_dense_tail_steps < 0:
@@ -138,6 +175,17 @@ class CoFrameConfig:
             and (num_frames is None or num_frames > 1)
         ):
             raise ValueError("adaptive_k_values must be >=2 when force_boundaries=True")
+        if self.method == "coframe_ode" and num_frames is not None:
+            target = float(self.ode_target_average_k or self.num_anchors)
+            boundary_floor = 2 if self.force_boundaries and num_frames > 1 else 1
+            minimum = int(self.ode_min_anchors or max(boundary_floor, round(2.0 * target / 3.0)))
+            maximum = int(self.ode_max_anchors or num_frames)
+            if not boundary_floor <= minimum <= target <= maximum <= num_frames:
+                raise ValueError("resolved ODE budgets must satisfy boundary_floor <= min <= target <= max <= frames")
+            if self.ode_budget_values and any(
+                int(value) < minimum or int(value) > maximum for value in self.ode_budget_values
+            ):
+                raise ValueError("ode_budget_values must lie inside the resolved ODE budget range")
         if self.min_anchor_gap < 1:
             raise ValueError("min_anchor_gap must be >= 1")
         if self.block_group_size < 1:
@@ -184,4 +232,5 @@ class CoFrameConfig:
         result["adaptive_k_values"] = list(self.adaptive_k_values)
         result["adaptive_k_thresholds"] = list(self.adaptive_k_thresholds)
         result["adaptive_k_schedule"] = dict(self.adaptive_k_schedule)
+        result["ode_budget_values"] = list(self.ode_budget_values)
         return result

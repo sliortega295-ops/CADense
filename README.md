@@ -1,14 +1,14 @@
 # CoFrame
 
-**Self-Validating Adaptive Frame Meshes for Sparse Video Diffusion**
+**ODE-Path-Aware Frame Budgets and Coverage-Aware Sparse Video Diffusion**
 
-CoFrame is a research prototype for testing block-conditional sparse-frame computation in **Wan2.1-T2V-1.3B**. The repository is deliberately organized around a falsifiable question:
+CoFrame is a training-free research prototype for block-conditional sparse-frame computation in **Wan2.1-T2V-1.3B**. The current proposed path separates two decisions:
 
-> Starting from a strong RhymeFlow-style clean-latent frame selector, can block-level leave-one-out interpolation defects improve the frame mesh under the same exact-frame budget?
+> How many frames should receive exact computation at the next denoising step, and where should those exact frames be placed inside each sparse block group?
 
-The current code targets `diffusers==0.34.0`, the same Wan integration generation used by the public RhymeFlow implementation. It is training-free and does not modify model weights.
+`--method coframe_ode` uses current trajectory signals to allocate the next step's frame budget, then applies deterministic coverage-aware interleaving across block groups. The earlier leave-one-out defect controller remains available as `--method coframe` so all negative and diagnostic experiments stay reproducible. The code targets `diffusers==0.34.0` and does not modify model weights.
 
-## Why this version of the idea
+## Historical mechanism experiments
 
 Our prior experiments found that FIS-DiT's rotating uniform selection behaved similarly to a fixed-frame baseline, while RhymeFlow's clean-latent cosine selector was meaningfully stronger. CoFrame therefore does **not** present uniform rotation as its main prior. Instead:
 
@@ -26,7 +26,8 @@ This isolates CoFrame's incremental contribution over the already-good Rhyme sel
 | `dense` | all frames | no | quality and latency reference |
 | `fixed` | uniform fixed budget | no | static frame-selection baseline |
 | `rhyme` | clean-latent sequential cosine | no | strong content-aware baseline |
-| `coframe` | same Rhyme initialization | leave-one-out block defect | proposed method |
+| `coframe` | same Rhyme initialization | leave-one-out block defect | legacy mechanism ablation |
+| `coframe_ode` | coverage-aware interleaving | step-level ODE/path budget | current proposed path |
 
 All sparse methods can use either:
 
@@ -84,6 +85,17 @@ Run the CPU tests before using a GPU:
 ```bash
 pytest -q
 ```
+
+## ODE-path-aware CoFrame
+
+```bash
+bash scripts/run_ode_coframe_wan21.sh \
+  "A red toy car turns sharply around a blue cube on a wooden table." \
+  outputs/ode_coframe \
+  0
+```
+
+The default controller supports arbitrary integer frame budgets within its resolved range and exactly conserves the configured average frame budget across sparse steps. See `docs/ODE_PATH_COFRAME.md` for the causal and execution contract.
 
 ## Canonical Wan2.1-1.3B validation
 

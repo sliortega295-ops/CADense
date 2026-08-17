@@ -212,6 +212,98 @@ def _fit_interleaved_budget(
     return chosen[:num_anchors]
 
 
+def _minimum_coverage_mesh(
+    num_frames: int,
+    num_anchors: int,
+    usage: Sequence[int],
+    *,
+    reuse_penalty: float,
+) -> list[int]:
+    """Solve one tiny exact-budget coverage problem with dynamic programming."""
+    if num_anchors == 1:
+        return [0]
+    # State maps (selected_count, last_anchor) to (cost, path). Boundaries are
+    # fixed; the gap-squared term minimizes large interpolation intervals while
+    # the usage term encourages successive groups to cover different frames.
+    states: dict[tuple[int, int], tuple[float, tuple[int, ...]]] = {(1, 0): (0.0, (0,))}
+    for selected_count in range(2, num_anchors + 1):
+        next_states: dict[tuple[int, int], tuple[float, tuple[int, ...]]] = {}
+        if selected_count == num_anchors:
+            right_candidates = (num_frames - 1,)
+        else:
+            minimum_right = selected_count - 1
+            maximum_right = num_frames - 1 - (num_anchors - selected_count)
+            right_candidates = range(minimum_right, maximum_right + 1)
+        for right in right_candidates:
+            best: tuple[float, tuple[int, ...]] | None = None
+            for (count, left), (cost, path) in states.items():
+                if count != selected_count - 1 or left >= right:
+                    continue
+                candidate_cost = cost + float((right - left) ** 2)
+                if right != num_frames - 1:
+                    candidate_cost += float(reuse_penalty) * float(usage[right])
+                candidate = (candidate_cost, path + (right,))
+                if best is None or candidate < best:
+                    best = candidate
+            if best is not None:
+                next_states[(selected_count, right)] = best
+        states = next_states
+    return list(states[(num_anchors, num_frames - 1)][1])
+
+
+def coverage_interleaved_select(
+    num_frames: int,
+    num_anchors: int,
+    phase_index: int,
+    *,
+    force_boundaries: bool = True,
+    anchor_stride: int = 0,
+    reuse_penalty: float = 2.0,
+) -> list[int]:
+    """Select an exact-budget, coverage-aware mesh for one block group.
+
+    With temporal boundaries enabled, a small dynamic program minimizes the
+    sum of squared anchor gaps plus a reuse penalty accumulated over earlier
+    phases in the cycle. This retains near-uniform coverage while rotating
+    exact computation across frames. ``anchor_stride`` optionally sets the
+    interleaving period; zero derives a short period from ``ceil(F/K)``.
+    """
+    if num_frames < 1 or num_anchors < 1:
+        raise ValueError("num_frames and num_anchors must be positive")
+    if reuse_penalty < 0.0:
+        raise ValueError("reuse_penalty must be non-negative")
+    if num_anchors >= num_frames:
+        return list(range(num_frames))
+    if not force_boundaries:
+        # The residual interpolator is normally used with boundary anchors.
+        # Preserve the earlier deterministic rotating-residue behavior for the
+        # uncommon boundary-free diagnostic mode.
+        stride = int(anchor_stride) if int(anchor_stride) > 0 else max(1, math.ceil(num_frames / num_anchors))
+        phase = int(phase_index) % stride
+        selected = [frame for frame in range(num_frames) if (frame - phase) % stride == 0]
+        return _fit_interleaved_budget(
+            selected,
+            num_frames=num_frames,
+            num_anchors=num_anchors,
+            force_boundaries=False,
+        )
+
+    period = int(anchor_stride) if int(anchor_stride) > 0 else max(1, math.ceil(num_frames / num_anchors))
+    phase = int(phase_index) % period
+    usage = [0 for _ in range(num_frames)]
+    mesh: list[int] = []
+    for _ in range(phase + 1):
+        mesh = _minimum_coverage_mesh(
+            num_frames,
+            num_anchors,
+            usage,
+            reuse_penalty=float(reuse_penalty),
+        )
+        for frame in mesh[1:-1]:
+            usage[frame] += 1
+    return mesh
+
+
 def fis_interleaved_select(
     num_frames: int,
     num_anchors: int,

@@ -66,7 +66,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-id", default="Wan-AI/Wan2.1-T2V-1.3B-Diffusers")
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--negative-prompt", default=DEFAULT_NEGATIVE_PROMPT)
-    parser.add_argument("--method", choices=["dense", "fixed", "fis", "rhyme", "coframe", "adaptive_k"], default="coframe")
+    parser.add_argument(
+        "--method",
+        choices=["dense", "fixed", "fis", "rhyme", "coframe", "adaptive_k", "coframe_ode"],
+        default="coframe",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--width", type=int, default=832)
@@ -108,6 +112,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--adaptive-k-thresholds", type=_csv_floats, default=())
     parser.add_argument("--adaptive-k-schedule-json", type=Path, default=None)
     parser.add_argument("--no-adaptive-k-carry", action="store_true")
+    parser.add_argument("--ode-target-average-k", type=float, default=0.0)
+    parser.add_argument("--ode-min-anchors", type=int, default=0)
+    parser.add_argument("--ode-max-anchors", type=int, default=0)
+    parser.add_argument("--ode-budget-values", type=_csv_ints, default=())
+    parser.add_argument("--ode-signal-ema", type=float, default=0.9)
+    parser.add_argument("--ode-signal-clip", type=float, default=4.0)
+    parser.add_argument("--ode-direction-weight", type=float, default=0.5)
+    parser.add_argument("--ode-endpoint-weight", type=float, default=0.5)
+    parser.add_argument("--ode-difficulty-power", type=float, default=1.0 / 3.0)
+    parser.add_argument("--ode-anchor-stride", type=int, default=0)
+    parser.add_argument("--ode-interleave-penalty", type=float, default=2.0)
+    parser.add_argument("--no-ode-interleave-across-steps", action="store_true")
 
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--run-name", default=None)
@@ -178,6 +194,18 @@ def main(argv: list[str] | None = None) -> int:
         adaptive_k_thresholds=args.adaptive_k_thresholds,
         adaptive_k_schedule={str(key): int(value) for key, value in adaptive_k_schedule.items()},
         adaptive_k_carry_across_steps=not args.no_adaptive_k_carry,
+        ode_target_average_k=args.ode_target_average_k,
+        ode_min_anchors=args.ode_min_anchors,
+        ode_max_anchors=args.ode_max_anchors,
+        ode_budget_values=args.ode_budget_values,
+        ode_signal_ema=args.ode_signal_ema,
+        ode_signal_clip=args.ode_signal_clip,
+        ode_direction_weight=args.ode_direction_weight,
+        ode_endpoint_weight=args.ode_endpoint_weight,
+        ode_difficulty_power=args.ode_difficulty_power,
+        ode_anchor_stride=args.ode_anchor_stride,
+        ode_interleave_penalty=args.ode_interleave_penalty,
+        ode_interleave_across_steps=not args.no_ode_interleave_across_steps,
         trace_path=str(trace_path),
         strict_diffusers_version=not args.allow_unsupported_diffusers,
     )
